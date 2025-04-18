@@ -53,7 +53,7 @@
        ,@body)
      (,(intern (concat "easy-" name)))))
 
-;; Adjust PATH for Homebrew binaries
+;; Adjust PATH for Homebrew binaries, optional based on your config
 (setenv "PATH" (concat (getenv "PATH") ":/opt/homebrew/bin"))
 (add-to-list 'exec-path "/opt/homebrew/bin")
 
@@ -93,12 +93,12 @@
 
 ;; Feature: Dired Enhancements
 (easy-feature "dired"
-			  "Set some Dired options."
-			  (use-package dired
-				:ensure nil
-				:custom
-				(dired-listing-switches "-l")
-				:hook (dired-mode . dired-hide-details-mode)))
+"Set some Dired options."
+(use-package dired
+  :ensure nil
+  :custom
+  (dired-listing-switches "-l")
+  :hook (dired-mode . dired-hide-details-mode)))
 
 ;; Feature: Themes & Padding
 (easy-feature "eyecandy"
@@ -132,7 +132,41 @@
 ;; Feature: Evil Motions
 (easy-feature "motions"
 			  "Vim-based motions and keybindings."
-			  (use-package evil :config (evil-mode 1)))
+			  (use-package avy :ensure t)
+			  (use-package evil
+				:config
+				(evil-mode 1)
+				(evil-set-leader 'normal (kbd "SPC"))
+				(evil-define-key 'normal 'global
+				  ;; <leader> f f → find-file
+				  (kbd "<leader> f f") #'find-file
+				  (kbd "<leader> b b") #'switch-to-buffer
+
+				  ;; avy navigation
+				  (kbd "<leader> c c") #'avy-goto-char-2
+				  (kbd "<leader> c l") #'avy-goto-line
+
+				  ;; search
+				  (kbd "<leader> s s") #'swiper-isearch
+				  (kbd "<leader> s g") #'counsel-rg
+				  (kbd "<leader> s a") #'swiper-all
+
+				  ;; python
+				  (kbd "<leader> p r") #'run-python
+				  (kbd "<leader> p d") #'python-shell-send-defun
+				  (kbd "<leader> p b") #'run-python
+				  ))
+			  (use-package which-key
+				:defer nil
+				:diminish which-key-mode
+				:custom
+				(which-key-idle-delay 0.5)
+				(which-key-popup-type 'side-window)
+				(which-key-side-window-location 'bottom)
+				(which-key-max-description-length 27)
+				(which-key-max-display-columns 4)
+				:config
+				(which-key-mode)))
 
 ;; Feature: Treesitter & LSP for Python
 (easy-feature "python-ide"
