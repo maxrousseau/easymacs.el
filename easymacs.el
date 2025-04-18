@@ -8,7 +8,7 @@
 ;; Single file config as a program, objective <600 LOC
 ;; @TODO: AI tab complete (no prompting*, just ghost text w/ minuet.el+ollama)
 ;; @TODO: python floating window repl (chatgpt how to do this)
-;; @TODO: fix up the essential evil keybindings
+;; @TODO: highlights...
 
 ;;; Code:
 
@@ -151,11 +151,17 @@
 				  (kbd "<leader> s g") #'counsel-rg
 				  (kbd "<leader> s a") #'swiper-all
 
-				  ;; python
-				  (kbd "<leader> p r") #'run-python
-				  (kbd "<leader> p d") #'python-shell-send-defun
-				  (kbd "<leader> p b") #'run-python
-				  ))
+				  )
+				;; python
+				(with-eval-after-load 'python          ;runs when either mode loads
+				  (dolist (map '(python-mode-map python-ts-mode-map))
+					(evil-define-key 'normal (symbol-value map)
+					  (kbd "<leader> p r") #'run-python
+					  (kbd "<leader> p s") #'python-shell-send-statement
+					  (kbd "<leader> p v") #'python-shell-send-region
+					  (kbd "<leader> p b") #'python-shell-send-buffer
+					  (kbd "<leader> p l") #'python-shell-send-current-line)))
+				)
 			  (use-package which-key
 				:defer nil
 				:diminish which-key-mode
