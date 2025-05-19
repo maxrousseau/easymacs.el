@@ -23,6 +23,7 @@
   (require 'use-package)
   (setq use-package-always-ensure t
         use-package-expand-minimally t))
+(setq frame-resize-pixelwise t)
 
 ;; Custom group and variables
 (defgroup easymacs nil
@@ -56,6 +57,26 @@
 ;; Adjust PATH for Homebrew binaries, optional based on your config
 (setenv "PATH" (concat (getenv "PATH") ":/opt/homebrew/bin"))
 (add-to-list 'exec-path "/opt/homebrew/bin")
+
+;; Store Emacs backup and auto-save files outside the repo
+(defcustom easymacs-backup-dir (expand-file-name "backups" user-emacs-directory)
+  "Directory for Emacs backup files."
+  :type 'directory
+  :group 'easymacs)
+
+(defcustom easymacs-autosave-dir (expand-file-name "autosaves" user-emacs-directory)
+  "Directory for Emacs auto-save files."
+  :type 'directory
+  :group 'easymacs)
+
+;; Ensure directories exist
+(dolist (dir (list easymacs-backup-dir easymacs-autosave-dir))
+  (unless (file-exists-p dir)
+    (make-directory dir t)))
+
+(setq backup-directory-alist `(("." . ,easymacs-backup-dir))
+      auto-save-file-name-transforms `((".*" ,easymacs-autosave-dir t))
+      auto-save-list-file-prefix (expand-file-name ".saves-" easymacs-autosave-dir))
 
 ;; Suppress startup screen
 (setq inhibit-startup-screen t)
@@ -107,7 +128,7 @@
 				:custom
 				(modus-themes-italic-constructs t)
 				:config
-				(load-theme 'modus-vivendi-tinted t))
+				(modus-themes-load-theme 'modus-vivendi-tinted))
 			  (use-package spacious-padding
 				:custom
 				(spacious-padding-subtle-mode-line t)
@@ -137,31 +158,44 @@
 				:config
 				(evil-mode 1)
 				(evil-set-leader 'normal (kbd "SPC"))
+				(evil-define-key 'insert 'global
+				  (kbd "C-c x") #'yas-expand
+				  )
 				(evil-define-key 'normal 'global
 				  ;; <leader> f f → find-file
 				  (kbd "<leader> f f") #'find-file
 				  (kbd "<leader> b b") #'switch-to-buffer
+				  (kbd "<leader> b x") #'kill-buffer
+
 
 				  ;; avy navigation
-				  (kbd "<leader> c c") #'avy-goto-char-2
-				  (kbd "<leader> c l") #'avy-goto-line
+				  (kbd "<leader> <leader>") #'avy-goto-char-2
+				  (kbd "<leader> l") #'avy-goto-line
+				  (kbd "<leader> c i") #'consult-imenu-multi
 
 				  ;; search
 				  (kbd "<leader> s s") #'swiper-isearch
 				  (kbd "<leader> s g") #'counsel-rg
 				  (kbd "<leader> s a") #'swiper-all
 
-				  )
-				;; python
-				(with-eval-after-load 'python          ;runs when either mode loads
-				  (dolist (map '(python-mode-map python-ts-mode-map))
-					(evil-define-key 'normal (symbol-value map)
-					  (kbd "<leader> p r") #'run-python
-					  (kbd "<leader> p s") #'python-shell-send-statement
-					  (kbd "<leader> p v") #'python-shell-send-region
-					  (kbd "<leader> p b") #'python-shell-send-buffer
-					  (kbd "<leader> p l") #'python-shell-send-current-line)))
+				  ;; snippets
+				  (kbd "<leader> x")
+				  (lambda ()
+					(interactive)
+					(evil-insert-state)
+					(call-interactively #'company-yasnippet)))
 				)
+
+			  ;; python
+			  (with-eval-after-load 'python          ;runs when either mode loads
+				(dolist (map '(python-mode-map python-ts-mode-map))
+				  (evil-define-key 'normal (symbol-value map)
+					(kbd "<leader> p r") #'run-python
+					(kbd "<leader> p s") #'python-shell-send-statement
+					(kbd "<leader> p d") #'python-shell-send-defun
+					(kbd "<leader> p v") #'python-shell-send-region
+					(kbd "<leader> p b") #'python-shell-send-buffer
+					(kbd "<leader> p l") #'python-shell-send-current-line)))
 			  (use-package which-key
 				:defer nil
 				:diminish which-key-mode
