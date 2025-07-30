@@ -215,8 +215,8 @@
 				  ;; <leader> f f → find-file
 				  (kbd "<leader> f x") #'counsel-fzf
 				  (kbd "<leader> f f") #'counsel-find-file
-				  (kbd "<leader> b b") #'switch-to-bufSfer
-				  (kbd "<leader> b x") #'kill-bufSfer
+				  (kbd "<leader> b b") #'switch-to-buffer
+				  (kbd "<leader> b x") #'kill-buffer
 				  (kbd "<leader> h") #'eldoc-box-help-at-point
 
 
