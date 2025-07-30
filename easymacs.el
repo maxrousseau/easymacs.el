@@ -5,12 +5,10 @@
 ;; and use-package :custom/:hook keywords for clarity and maintainability.
 
 ;;; Features:
-;; Single file config as a program, objective <600 LOC
+;; Single file config as a program, objective <300 LOC
 ;; @TODO: AI tab complete (no prompting*, just ghost text w/ minuet.el+ollama)
-;; @TODO: python floating window repl (chatgpt how to do this)
 ;; @TODO: highlights...
-
-;;; Code:
+;; @TODO: a decent term w/ eat, vterm or mistty
 
 (require 'package)
 ;; Basic package repositories and use-package bootstrap
@@ -93,6 +91,12 @@
 			  (use-package swiper :hook (ivy-mode . swiper))
 			  (use-package counsel :hook (ivy-mode . counsel-mode)))
 
+;; Feature: terminal with eshell and eat
+(easy-feature "terminal"
+			  ""
+			  (use-package vterm
+				:ensure t))
+
 ;; Feature: Basic Appearances
 (easy-feature "appearance"
 			  "Default appearance settings for Easymacs."
@@ -124,18 +128,31 @@
 ;; Feature: Themes & Padding
 (easy-feature "eyecandy"
 			  "Load theme and set frame padding."
-			  (use-package modus-themes
-				:custom
-				(modus-themes-italic-constructs t)
+			  ;; (use-package modus-themes
+			  ;; 	:custom
+			  ;; 	(modus-themes-italic-constructs t)
+			  ;; 	:config
+			  ;; 	(modus-themes-load-theme 'modus-vivendi-tinted))
+			  ;; (use-package spacious-padding
+			  ;; 	:custom
+			  ;; 	(spacious-padding-subtle-mode-line t)
+			  ;; 	(spacious-padding-widths
+			  ;; 	 '(:internal-border-width 40 :right-divider-width -1))
+			  ;; 	:config
+			  ;; 	(spacious-padding-mode 1))
+			  (use-package mood-line
+				;; Enable mood-line
 				:config
-				(modus-themes-load-theme 'modus-vivendi-tinted))
-			  (use-package spacious-padding
+				(mood-line-mode)
+				;; Use pretty Fira Code-compatible glyphs
 				:custom
-				(spacious-padding-subtle-mode-line t)
-				(spacious-padding-widths
-				 '(:internal-border-width 40 :right-divider-width -1))
+				(mood-line-glyph-alist mood-line-glyphs-fira-code))
+			  (use-package catppuccin-theme
 				:config
-				(spacious-padding-mode 1))
+				(load-theme 'catppuccin :no-confirm)
+				(setq catppuccin-flavor 'macchiato) ;; or 'latte, 'macchiato, or 'mocha
+				(catppuccin-reload)
+				)
 			  (use-package rainbow-delimiters :hook (prog-mode . rainbow-delimiters-mode)))
 
 ;; Feature: Snippets
@@ -149,6 +166,37 @@
 				(yas-global-mode 1)
 				:hook (prog-mode . yas-minor-mode))
 			  (use-package yasnippet-snippets :after yasnippet))
+(easy-feature "git"
+			  "Configure magit integration for version control"
+			  (use-package magit
+				:ensure t
+				:bind (("C-x g" . magit-status)
+					   ("C-x C-g" . magit-status))))
+
+(easy-feature "ai-inline"
+			  "Configure simple AI inline assistant with minuet"
+			  (use-package minuet
+				:bind
+				(
+				 ("M-i" . #'minuet-show-suggestion) ;; use overlay for completion
+				 ("C-c m" . #'minuet-configure-provider)
+				 :map minuet-active-mode-map
+				 ;; These keymaps activate only when a minuet suggestion is displayed in the current buffer
+				 ("M-p" . #'minuet-previous-suggestion) ;; invoke completion or cycle to next completion
+				 ("M-n" . #'minuet-next-suggestion) ;; invoke completion or cycle to previous completion
+				 ("M-a" . #'minuet-accept-suggestion) ;; accept whole completion
+				 )
+				:config
+				(setq minuet-provider 'openai-compatible)
+				(setq minuet-request-timeout 2.5)
+
+				(plist-put minuet-openai-compatible-options :end-point "https://openrouter.ai/api/v1/chat/completions")
+				(plist-put minuet-openai-compatible-options :api-key "OPENROUTER_API_KEY")
+				(plist-put minuet-openai-compatible-options :model "moonshotai/kimi-k2")
+				;; Prioritize throughput for faster completion
+				(minuet-set-optional-options minuet-openai-compatible-options :provider '(:sort "throughput"))
+				(minuet-set-optional-options minuet-openai-compatible-options :max_tokens 256)
+				(minuet-set-optional-options minuet-openai-compatible-options :top_p 0.9)))
 
 ;; Feature: Evil Motions
 (easy-feature "motions"
@@ -161,15 +209,19 @@
 				(evil-define-key 'insert 'global
 				  (kbd "C-c x") #'yas-expand
 				  )
+				(evil-define-key 'insert 'global
+				  (kbd "C-; x") #'company-yasnippet)
 				(evil-define-key 'normal 'global
 				  ;; <leader> f f → find-file
-				  (kbd "<leader> f f") #'find-file
-				  (kbd "<leader> b b") #'switch-to-buffer
-				  (kbd "<leader> b x") #'kill-buffer
+				  (kbd "<leader> f x") #'counsel-fzf
+				  (kbd "<leader> f f") #'counsel-find-file
+				  (kbd "<leader> b b") #'switch-to-bufSfer
+				  (kbd "<leader> b x") #'kill-bufSfer
+				  (kbd "<leader> h") #'eldoc-box-help-at-point
 
 
 				  ;; avy navigation
-				  (kbd "<leader> <leader>") #'avy-goto-char-2
+				  (kbd "<leader> <SPC>") #'avy-goto-char-2
 				  (kbd "<leader> l") #'avy-goto-line
 				  (kbd "<leader> c i") #'consult-imenu-multi
 
@@ -206,7 +258,9 @@
 				(which-key-max-description-length 27)
 				(which-key-max-display-columns 4)
 				:config
-				(which-key-mode)))
+				(which-key-mode))
+
+			  )
 
 ;; Feature: Treesitter & LSP for Python
 (easy-feature "python-ide"
@@ -238,10 +292,20 @@
 				(use-package company-quickhelp
 				  :after company
 				  :custom
-				  (company-quickhelp-delay 0.2)
+				  (company-quickhelp-delay 0)
 				  :config
 				  (company-quickhelp-mode)))
-			  (use-package eldoc-box :hook (eldoc-mode . eldoc-box-hover-mode))
+			  ;; ─── Pop the box only when I ask ──────────────────────────────────────────────
+			  (use-package eldoc-box
+				:defer t                     ; don’t activate anything until we call it
+				;; no :hook line → hover modes stay off
+				:custom
+				;; one-liners still go to the minibuffer; multi-line docs need the key-press
+				(eldoc-box-only-multi-line t))
+			  ;; Show Eldoc in a child-frame anchored to the lower-right corner
+			  (setq python-shell-interpreter "ipython"
+					python-shell-interpreter-args "-i --simple-prompt")
+
 			  (add-hook 'python-mode-hook
 						(lambda ()
 						  (setq-local indent-tabs-mode nil
