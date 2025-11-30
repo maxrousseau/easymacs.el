@@ -28,7 +28,7 @@
   "Opinionated Emacs config for Maxime Rousseau."
   :group 'convenience)
 
-(defcustom easymacs-font-face "Hack"
+(defcustom easymacs-font-face "FiraCode Nerd Font"
   "Font family for Easymacs."
   :type 'string
   :group 'easymacs)
@@ -82,6 +82,7 @@
 ;; Feature: Completion & Search
 (easy-feature "completion"
 			  "Configure Ivy, Counsel, and Swiper for enhanced completion and search."
+			  (global-auto-revert-mode 1) ;; claude code
 			  (use-package ivy
 				:custom
 				(ivy-use-virtual-buffers t)
@@ -94,8 +95,10 @@
 ;; Feature: terminal with eshell and eat
 (easy-feature "terminal"
 			  ""
-			  (use-package vterm
-				:ensure t))
+			  (use-package eat 
+				:ensure t
+				:hook
+				(eat-mode . eat-line-mode)))
 
 ;; Feature: Basic Appearances
 (easy-feature "appearance"
@@ -128,18 +131,6 @@
 ;; Feature: Themes & Padding
 (easy-feature "eyecandy"
 			  "Load theme and set frame padding."
-			  ;; (use-package modus-themes
-			  ;; 	:custom
-			  ;; 	(modus-themes-italic-constructs t)
-			  ;; 	:config
-			  ;; 	(modus-themes-load-theme 'modus-vivendi-tinted))
-			  ;; (use-package spacious-padding
-			  ;; 	:custom
-			  ;; 	(spacious-padding-subtle-mode-line t)
-			  ;; 	(spacious-padding-widths
-			  ;; 	 '(:internal-border-width 40 :right-divider-width -1))
-			  ;; 	:config
-			  ;; 	(spacious-padding-mode 1))
 			  (use-package mood-line
 				;; Enable mood-line
 				:config
@@ -147,10 +138,14 @@
 				;; Use pretty Fira Code-compatible glyphs
 				:custom
 				(mood-line-glyph-alist mood-line-glyphs-fira-code))
+			  (use-package breadcrumb
+				:ensure t
+				:config
+				(breadcrumb-mode))
 			  (use-package catppuccin-theme
 				:config
 				(load-theme 'catppuccin :no-confirm)
-				(setq catppuccin-flavor 'macchiato) ;; or 'latte, 'macchiato, or 'mocha
+				(setq catppuccin-flavor 'mocha) ;; or 'latte, 'macchiato, or 'mocha
 				(catppuccin-reload)
 				)
 			  (use-package rainbow-delimiters :hook (prog-mode . rainbow-delimiters-mode)))
@@ -188,13 +183,13 @@
 				 )
 				:config
 				(setq minuet-provider 'openai-compatible)
-				(setq minuet-request-timeout 2.5)
-
+				(setq minuet-request-timeout 2.5) ;; TODO alert user when timeout exceeded
+				;; TODO setup a system prompt
 				(plist-put minuet-openai-compatible-options :end-point "https://openrouter.ai/api/v1/chat/completions")
 				(plist-put minuet-openai-compatible-options :api-key "OPENROUTER_API_KEY")
-				(plist-put minuet-openai-compatible-options :model "moonshotai/kimi-k2")
+				(plist-put minuet-openai-compatible-options :model "anthropic/claude-haiku-4.5")
 				;; Prioritize throughput for faster completion
-				(minuet-set-optional-options minuet-openai-compatible-options :provider '(:sort "throughput"))
+				(minuet-set-optional-options minuet-openai-compatible-options :provider '(:sort "latency"))
 				(minuet-set-optional-options minuet-openai-compatible-options :max_tokens 256)
 				(minuet-set-optional-options minuet-openai-compatible-options :top_p 0.9)))
 
@@ -206,6 +201,9 @@
 				:config
 				(evil-mode 1)
 				(evil-set-leader 'normal (kbd "SPC"))
+				;; Make M-x work properly in all Evil states
+				(evil-define-key '(normal insert visual emacs) 'global
+				  (kbd "M-x") #'execute-extended-command)
 				(evil-define-key 'insert 'global
 				  (kbd "C-c x") #'yas-expand
 				  )
@@ -213,10 +211,10 @@
 				  (kbd "C-; x") #'company-yasnippet)
 				(evil-define-key 'normal 'global
 				  ;; <leader> f f → find-file
-				  (kbd "<leader> f x") #'counsel-fzf
-				  (kbd "<leader> f f") #'counsel-find-file
-				  (kbd "<leader> b b") #'switch-to-buffer
-				  (kbd "<leader> b x") #'kill-buffer
+				  ;;(kbd "<leader> f") #'counsel-fzf ;; TODO should be setup to use repo root
+				  (kbd "<leader> f") #'counsel-find-file
+				  (kbd "<leader> b") #'switch-to-buffer
+				  ;;(kbd "<leader> x b") #'kill-buffer
 				  (kbd "<leader> h") #'eldoc-box-help-at-point
 
 
@@ -226,9 +224,9 @@
 				  (kbd "<leader> c i") #'consult-imenu-multi
 
 				  ;; search
-				  (kbd "<leader> s s") #'swiper-isearch
-				  (kbd "<leader> s g") #'counsel-rg
-				  (kbd "<leader> s a") #'swiper-all
+				  (kbd "<leader> s") #'swiper-isearch
+				  (kbd "<leader> g") #'counsel-rg
+				  (kbd "<leader> a") #'swiper-all
 
 				  ;; snippets
 				  (kbd "<leader> x")
@@ -277,24 +275,19 @@
 					   (python-ts-mode . eglot-ensure))
 				:config
 				(add-to-list 'eglot-server-programs
-							 '(python-mode . ("pyright-langserver" "--stdio"))))
+							 '((python-mode python-ts-mode) . ("zubanls")))))
 			  (use-package ruff-format :hook ((python-mode . ruff-format-on-save-mode)
 											  (python-ts-mode . ruff-format-on-save-mode)))
 			  (use-package company
 				:custom
-				(company-idle-delay 0)
+				(company--idle-delay 0.2)
 				(company-minimum-prefix-length 1)
 				(company-tooltip-limit 20)
 				(company-show-numbers t)
 				(company-tooltip-align-annotations t)
 				:config
 				(global-company-mode)
-				(use-package company-quickhelp
-				  :after company
-				  :custom
-				  (company-quickhelp-delay 0)
-				  :config
-				  (company-quickhelp-mode)))
+				)
 			  ;; ─── Pop the box only when I ask ──────────────────────────────────────────────
 			  (use-package eldoc-box
 				:defer t                     ; don’t activate anything until we call it
