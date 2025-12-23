@@ -8,7 +8,7 @@
 ;; Single file config as a program, objective <300 LOC
 ;; @TODO: AI tab complete (no prompting*, just ghost text w/ minuet.el+ollama)
 ;; @TODO: highlights...
-;; @TODO: a decent term w/ eat, vterm or mistty
+;; @TODO: a decent term w/ eat, vterm or mistt
 
 (require 'package)
 ;; Basic package repositories and use-package bootstrap
@@ -92,13 +92,17 @@
 			  (use-package swiper :hook (ivy-mode . swiper))
 			  (use-package counsel :hook (ivy-mode . counsel-mode)))
 
-;; Feature: terminal with eshell and eat
+;; Feature: terminal with eshell, eat, and mistty
 (easy-feature "terminal"
-			  ""
-			  (use-package eat 
+			  "Terminal emulation with eat and mistty."
+			  (use-package eat
 				:ensure t
 				:hook
-				(eat-mode . eat-line-mode)))
+				(eat-mode . eat-line-mode))
+			  (use-package mistty
+				:ensure t
+				:bind (("C-c s" . mistty-in-project)
+					   ("C-c S" . mistty))))
 
 ;; Feature: Basic Appearances
 (easy-feature "appearance"
@@ -276,35 +280,35 @@
 				:config
 				(add-to-list 'eglot-server-programs
 							 '((python-mode python-ts-mode) . ("zubanls")))))
-			  (use-package ruff-format :hook ((python-mode . ruff-format-on-save-mode)
-											  (python-ts-mode . ruff-format-on-save-mode)))
-			  (use-package company
-				:custom
-				(company--idle-delay 0.2)
-				(company-minimum-prefix-length 1)
-				(company-tooltip-limit 20)
-				(company-show-numbers t)
-				(company-tooltip-align-annotations t)
-				:config
-				(global-company-mode)
-				)
-			  ;; ─── Pop the box only when I ask ──────────────────────────────────────────────
-			  (use-package eldoc-box
-				:defer t                     ; don’t activate anything until we call it
-				;; no :hook line → hover modes stay off
-				:custom
-				;; one-liners still go to the minibuffer; multi-line docs need the key-press
-				(eldoc-box-only-multi-line t))
-			  ;; Show Eldoc in a child-frame anchored to the lower-right corner
-			  (setq python-shell-interpreter "ipython"
-					python-shell-interpreter-args "-i --simple-prompt")
+(use-package ruff-format :hook ((python-mode . ruff-format-on-save-mode)
+								(python-ts-mode . ruff-format-on-save-mode)))
+(use-package company
+  :custom
+  (company--idle-delay 0.2)
+  (company-minimum-prefix-length 1)
+  (company-tooltip-limit 20)
+  (company-show-numbers t)
+  (company-tooltip-align-annotations t)
+  :config
+  (global-company-mode)
+  )
+;; ─── Pop the box only when I ask ──────────────────────────────────────────────
+(use-package eldoc-box
+  :defer t                     ; don’t activate anything until we call it
+  ;; no :hook line → hover modes stay off
+  :custom
+  ;; one-liners still go to the minibuffer; multi-line docs need the key-press
+  (eldoc-box-only-multi-line t))
+;; Show Eldoc in a child-frame anchored to the lower-right corner
+(setq python-shell-interpreter "ipython"
+	  python-shell-interpreter-args "-i --simple-prompt")
 
-			  (add-hook 'python-mode-hook
-						(lambda ()
-						  (setq-local indent-tabs-mode nil
-									  tab-width 4
-									  py-indent-tabs-mode t)
-						  (add-hook 'before-save-hook #'delete-trailing-whitespace nil t))))
+(add-hook 'python-mode-hook
+		  (lambda ()
+			(setq-local indent-tabs-mode nil
+						tab-width 4
+						py-indent-tabs-mode t)
+			(add-hook 'before-save-hook #'delete-trailing-whitespace nil t)))
 
 (provide 'easymacs)
 ;;; easymacs.el ends here
