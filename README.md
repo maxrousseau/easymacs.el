@@ -1,7 +1,6 @@
-
 <div class="header" align="center">
 
-# mr-emacs
+# easymacs
 
 <div class="logo">
 <p align="center">
@@ -14,24 +13,37 @@ A minimal emacs configuration.
 </div>
 
 
-
 ## Motivation
 
-Emacs is great out of the box. This project aims to create a simple configuration which contains the minimum viable components to make it a complete user interface.
+Emacs is great. This project aims to create a simple configuration which contains the minimum viable components to make it a decent python editor with just a single file (similar to kickstart.nvim).
 
-## Contents
+## Features
 
-``` sh
-    mr-emacs/
-      modules/    # modular configuration files (i.e. python, motion, etc)
-      mr-simple.el   # the core file containing the initialization filer
-	  init.el     # symlink this file to ~/.emacs.d/init.el
+- Vim motions powered by Evil
+- Python IDE-like experience
+  - LSP
+  - Documentation on function hover
+  - Autocompletion
+  - Snippets
+  - REPL
+
+### Not yet implemented
+- Local LLM tab completion with minuet.el
+
+## Installation and usage
+
+This package requires Emacs version 29.1+
+
+To use easymacs, first clone the repo.
+
+Then simply add this to your ```~/.emacs``` or ```~/.emacs.d/init.el```
+```lisp
+;; Add the directory containing mr-simple to the load-path
+(add-to-list 'load-path "path/to/easymacs/")
+;; Require the package to load it
+(require 'easymacs)
 ```
 
--   [x] [base configuration](./mr-simple.el) basic configuration settings (i.e. fonts, colorscheme, package setup, etc.)
--   [x] [motions](modules/mr-motion.el) : use avy for editing and other movement settings
--   [x] [orgmode](modules/mr-orgmode.el)
--   [x] [python](modules/mr-python.el)
--   [-] [eshell](modules/mr-eshell.el)
--   [-] [ai](modules/mr-ai.el) : (whisper and GPT calls)
--   [ ] [modeline](modules/mr-modeline.el)
+Then all packages should install automatically when you start emacs.
+
+
