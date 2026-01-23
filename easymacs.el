@@ -10,9 +10,9 @@
 ;; - A decent term w/ eat, vterm or mistt
 
 ;; macOS modifier keys (must be set before anything else)
-(when (eq system-type 'darwin)
-  (setq mac-command-modifier 'meta
-        mac-option-modifier 'super))
+;; (when (eq system-type 'darwin)
+;;   (setq mac-command-modifier 'meta
+;;         mac-option-modifier 'super))
 
 (require 'package)
 ;; Basic package repositories and use-package bootstrap
@@ -96,7 +96,8 @@
 
 (use-package mistty
   :bind (("C-c s" . mistty-in-project)
-         ("C-c S" . mistty)))
+         ("C-c S" . mistty)
+         ("C-c M-s" . mistty-create)))
 
 ;; Appearance
 (setq ring-bell-function 'ignore
@@ -178,9 +179,9 @@
   (setq minuet-request-timeout 2.5)
   (plist-put minuet-openai-compatible-options :end-point "https://openrouter.ai/api/v1/chat/completions")
   (plist-put minuet-openai-compatible-options :api-key "OPENROUTER_API_KEY")
-  (plist-put minuet-openai-compatible-options :model "anthropic/claude-haiku-4.5")
+  (plist-put minuet-openai-compatible-options :model "anthropic/claude-sonnet-4.5")
   (minuet-set-optional-options minuet-openai-compatible-options :provider '(:sort "latency"))
-  (minuet-set-optional-options minuet-openai-compatible-options :max_tokens 256)
+  (minuet-set-optional-options minuet-openai-compatible-options :max_tokens 1000)
   (minuet-set-optional-options minuet-openai-compatible-options :top_p 0.9))
 
 ;; Navigation & Commands (C-; prefix)
@@ -188,11 +189,14 @@
 
 (define-prefix-command 'easymacs-leader-map)
 (global-set-key (kbd "C-;") 'easymacs-leader-map)
+(global-set-key (kbd "C-x C-b") 'switch-to-buffer)
 
 (define-key easymacs-leader-map (kbd "f") #'counsel-find-file)
 (define-key easymacs-leader-map (kbd "b") #'switch-to-buffer)
 (define-key easymacs-leader-map (kbd "h") #'eldoc-box-help-at-point)
-(define-key easymacs-leader-map (kbd "SPC") #'avy-goto-char-2)
+;; (define-key easymacs-leader-map (kbd "SPC") #'avy-goto-char-2)
+(define-key easymacs-leader-map (kbd "j") #'avy-goto-char-2)
+(define-key easymacs-leader-map (kbd "C-;") #'avy-goto-char-2)
 (define-key easymacs-leader-map (kbd "l") #'avy-goto-line)
 (define-key easymacs-leader-map (kbd "i") #'consult-imenu-multi)
 (define-key easymacs-leader-map (kbd "s") #'swiper-isearch)
@@ -210,6 +214,14 @@
 (define-key easymacs-python-map (kbd "v") #'python-shell-send-region)
 (define-key easymacs-python-map (kbd "b") #'python-shell-send-buffer)
 (define-key easymacs-python-map (kbd "l") #'python-shell-send-current-line)
+
+;; setup god-mode global
+(use-package god-mode
+  :config
+  (global-set-key (kbd "<escape>") #'god-mode-all)
+  (defun my-god-mode-update-cursor-type ()
+	(setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
+  (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
 
 (use-package which-key
   :diminish which-key-mode
