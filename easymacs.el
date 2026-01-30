@@ -14,6 +14,8 @@
 ;;   (setq mac-command-modifier 'meta
 ;;         mac-option-modifier 'super))
 
+(add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
+
 (require 'package)
 ;; Basic package repositories and use-package bootstrap
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
@@ -139,11 +141,15 @@
   :config
   (breadcrumb-mode))
 
-(use-package catppuccin-theme
+(use-package modus-themes
   :config
-  (setq catppuccin-flavor 'mocha)
-  (load-theme 'catppuccin :no-confirm)
-  (catppuccin-reload))
+  (load-theme 'modus-vivendi :no-confirm))
+
+;; (use-package catppuccin-theme
+;;   :config
+;;   (setq catppuccin-flavor 'mocha)
+;;   (load-theme 'catppuccin :no-confirm)
+;;   (catppuccin-reload))
 
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
@@ -203,6 +209,7 @@
 (define-key easymacs-leader-map (kbd "g") #'counsel-rg)
 (define-key easymacs-leader-map (kbd "a") #'swiper-all)
 (define-key easymacs-leader-map (kbd "x") #'company-yasnippet)
+(define-key easymacs-leader-map (kbd "t") #'modus-themes-toggle)
 
 ;; Python keybindings (C-; p prefix)
 (define-prefix-command 'easymacs-python-map)
@@ -215,10 +222,23 @@
 (define-key easymacs-python-map (kbd "b") #'python-shell-send-buffer)
 (define-key easymacs-python-map (kbd "l") #'python-shell-send-current-line)
 
+;; Claude Code Integration
+(require 'easymacs-claude)
+
+;; Keybindings under C-; c prefix
+(define-prefix-command 'easymacs-claude-map)
+(define-key easymacs-leader-map (kbd "C-c") 'easymacs-claude-map)
+(define-key easymacs-claude-map (kbd "c") #'easymacs-claude)
+(define-key easymacs-claude-map (kbd "n") #'easymacs-claude-newsession)
+(define-key easymacs-claude-map (kbd "r") #'easymacs-claude-revert)
+
+
 ;; setup god-mode global
 (use-package god-mode
   :config
   (global-set-key (kbd "<escape>") #'god-mode-all)
+  (setq god-exempt-major-modes nil)
+  (setq god-exempt-predicates nil)
   (defun my-god-mode-update-cursor-type ()
 	(setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
   (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
@@ -279,7 +299,7 @@
 (add-hook 'python-mode-hook
           (lambda ()
             (setq-local indent-tabs-mode nil
-                        tab-width 4
+                        tab-width 2
                         py-indent-tabs-mode t)
             (add-hook 'before-save-hook #'delete-trailing-whitespace nil t)))
 
