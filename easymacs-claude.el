@@ -2,6 +2,7 @@
 
 ;;; Commentary:
 ;; Provides Claude Code integration with streaming output and diff review.
+;; IRC-style message formatting for clean output.
 
 ;;; Code:
 
@@ -193,7 +194,12 @@
         (goto-char (point-max))
         (if face
             (insert (propertize text 'face face))
-          (insert text))))))
+          (insert text)))
+      ;; Scroll window to show new content
+      (when-let ((win (get-buffer-window buf t)))
+        (with-selected-window win
+          (goto-char (point-max))
+          (recenter -1))))))
 
 (defun easymacs-claude--handle-tool-use (item)
   "Handle a tool_use ITEM and display it."
@@ -202,30 +208,27 @@
     (cond
      ((equal tool-name "Read")
       (let ((file-path (alist-get 'file_path input)))
-        (easymacs-claude--insert "\n[Reading: " 'easymacs-claude-tool-face)
-        (easymacs-claude--insert (or file-path "unknown") 'easymacs-claude-file-face)
-        (easymacs-claude--insert "]\n" 'easymacs-claude-tool-face)))
+        (easymacs-claude--insert " * " 'easymacs-claude-tool-face)
+        (easymacs-claude--insert "read " 'easymacs-claude-tool-face)
+        (easymacs-claude--insert (file-name-nondirectory (or file-path "?")) 'easymacs-claude-file-face)
+        (easymacs-claude--insert "\n")))
      ((equal tool-name "Edit")
       (let ((file (or (alist-get 'file_path input) "unknown"))
             (old-str (alist-get 'old_string input))
             (new-str (alist-get 'new_string input)))
         (push (list file old-str new-str) easymacs-claude--edits)
-        (easymacs-claude--insert "\n[Editing: " 'easymacs-claude-tool-face)
-        (easymacs-claude--insert file 'easymacs-claude-file-face)
-        (easymacs-claude--insert "]\n" 'easymacs-claude-tool-face)
-        (easymacs-claude--insert
-         (format "  - %s\n" (truncate-string-to-width (or old-str "") 60 nil nil "..."))
-         'easymacs-claude-removed-face)
-        (easymacs-claude--insert
-         (format "  + %s\n" (truncate-string-to-width (or new-str "") 60 nil nil "..."))
-         'easymacs-claude-added-face)))
+        (easymacs-claude--insert " * " 'easymacs-claude-tool-face)
+        (easymacs-claude--insert "edit " 'easymacs-claude-tool-face)
+        (easymacs-claude--insert (file-name-nondirectory file) 'easymacs-claude-file-face)
+        (easymacs-claude--insert "\n")))
      ((equal tool-name "Write")
       (let ((file-path (alist-get 'file_path input)))
-        (easymacs-claude--insert "\n[Writing: " 'easymacs-claude-tool-face)
-        (easymacs-claude--insert (or file-path "unknown") 'easymacs-claude-file-face)
-        (easymacs-claude--insert "]\n" 'easymacs-claude-tool-face)))
+        (easymacs-claude--insert " * " 'easymacs-claude-tool-face)
+        (easymacs-claude--insert "write " 'easymacs-claude-tool-face)
+        (easymacs-claude--insert (file-name-nondirectory (or file-path "?")) 'easymacs-claude-file-face)
+        (easymacs-claude--insert "\n")))
      (t
-      (easymacs-claude--insert (format "\n[Using: %s]\n" tool-name) 'easymacs-claude-tool-face)))))
+      (easymacs-claude--insert (format " * %s\n" (downcase tool-name)) 'easymacs-claude-tool-face)))))
 
 (defun easymacs-claude--handle-assistant (json)
   "Handle an assistant message JSON."
@@ -236,7 +239,10 @@
         (let ((item-type (alist-get 'type item)))
           (cond
            ((equal item-type "text")
-            (easymacs-claude--insert (alist-get 'text item)))
+            (let ((text (alist-get 'text item)))
+              (easymacs-claude--insert text)
+              (unless (string-suffix-p "\n" text)
+                (easymacs-claude--insert "\n"))))
            ((equal item-type "tool_use")
             (easymacs-claude--handle-tool-use item))))))))
 
@@ -265,7 +271,7 @@
          ;; Init message
          ((and (equal type "system") (equal subtype "init"))
           (easymacs-claude--insert
-           (format "[Session: %s | Model: %s]\n\n"
+           (format "-- %s | %s --\n"
                    (alist-get 'session_id json)
                    (alist-get 'model json))
            'easymacs-claude-header-face))
@@ -280,18 +286,21 @@
                 (when (and (equal (alist-get 'type item) "tool_result")
                            (alist-get 'is_error item))
                   (easymacs-claude--insert
-                   (format "\n[Error: %s]\n" (alist-get 'content item))
+                   (format " [err: %s]\n" (alist-get 'content item))
                    'easymacs-claude-error-face))))))
          ;; Result summary
          ((equal type "result")
           (let ((cost (alist-get 'total_cost_usd json))
                 (turns (alist-get 'num_turns json))
-                (unique-files (length (seq-uniq
-                                       (mapcar #'car easymacs-claude--edits)))))
-            (easymacs-claude--insert "\n\n--- Summary ---\n" 'easymacs-claude-header-face)
+                (edits (length easymacs-claude--edits))
+                (files (length (seq-uniq (mapcar #'car easymacs-claude--edits)))))
             (easymacs-claude--insert
-             (format "Turns: %s | Cost: $%.4f\nEdits: %d operation(s) in %d file(s)\n"
-                     turns (or cost 0) (length easymacs-claude--edits) unique-files)
+             (format "-- %s turn(s) | $%.4f%s --\n"
+                     turns
+                     (or cost 0)
+                     (if (> edits 0)
+                         (format " | %d edit(s) in %d file(s)" edits files)
+                       ""))
              'easymacs-claude-summary-face))))
         t) ; return t on success
     (error nil))) ; return nil on parse error
@@ -340,7 +349,7 @@
                             'fundamental-mode)))
          (full-prompt (concat context "\n---\n" prompt))
          (output-buffer (get-buffer-create "*Claude*"))
-         (allowed-tools (format "Edit:%s Read" source-file))
+         (allowed-tools (format "Edit:%s Read Glob Grep Task WebSearch WebFetch" source-file))
          (quoted-prompt (shell-quote-argument full-prompt))
          (quoted-tools (shell-quote-argument allowed-tools))
          (cmd (format "claude -p %s --allowedTools %s --permission-mode acceptEdits --output-format stream-json --verbose%s"
@@ -351,10 +360,9 @@
     (setq easymacs-claude--busy t)
     (with-current-buffer output-buffer
       (goto-char (point-max))
-      (insert (propertize "\n\n========================================\n" 'face 'easymacs-claude-header-face))
-      (insert (propertize "--- User ---\n" 'face 'easymacs-claude-user-face))
+      (insert (propertize "<you> " 'face 'easymacs-claude-user-face))
       (insert prompt)
-      (insert (propertize "\n\n--- Claude ---\n" 'face 'easymacs-claude-assistant-face)))
+      (insert (propertize "\n<claude> " 'face 'easymacs-claude-assistant-face)))
     (let ((claude-win (get-buffer-window output-buffer t)))
       (unless claude-win
         ;; Not visible, split once to the right

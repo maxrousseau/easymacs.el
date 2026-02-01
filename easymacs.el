@@ -193,6 +193,12 @@
 ;; Navigation & Commands (C-; prefix)
 (use-package avy)
 
+(use-package ace-window
+  :bind ("M-o" . ace-window)
+  :custom
+  (aw-keys '(?a ?s ?d ?f ?g ?h ?j ?k ?l))
+  (aw-scope 'frame))
+
 (define-prefix-command 'easymacs-leader-map)
 (global-set-key (kbd "C-;") 'easymacs-leader-map)
 (global-set-key (kbd "C-x C-b") 'switch-to-buffer)
