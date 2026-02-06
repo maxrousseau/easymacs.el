@@ -237,6 +237,9 @@
 (define-key easymacs-claude-map (kbd "c") #'easymacs-claude)
 (define-key easymacs-claude-map (kbd "n") #'easymacs-claude-newsession)
 (define-key easymacs-claude-map (kbd "r") #'easymacs-claude-revert)
+(define-key easymacs-claude-map (kbd "t") #'easymacs-claude-toggle-display-mode)
+(define-key easymacs-claude-map (kbd "p") #'easymacs-claude-interrupt)
+(define-key easymacs-claude-map (kbd "k") #'easymacs-claude-stop)
 
 
 ;; setup god-mode global

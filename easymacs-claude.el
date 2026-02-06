@@ -46,6 +46,18 @@
   '((t :foreground "#abb2bf" :slant italic))
   "Face for summary information.")
 
+(defface easymacs-claude-ghost-face
+  '((t :inherit shadow :slant italic))
+  "Face for inline ghost text overlay.")
+
+(defcustom easymacs-claude-display-mode 'inline
+  "How to display Claude's response.
+`buffer' shows output in a side *Claude* buffer.
+`inline' shows output as ghost text overlay at the invocation point (default)."
+  :type '(choice (const :tag "Side buffer" buffer)
+                 (const :tag "Inline ghost text" inline))
+  :group 'easymacs)
+
 (defvar easymacs-claude-session-active nil
   "Non-nil when a Claude session has been started this Emacs session.")
 
@@ -78,6 +90,33 @@
 
 (defvar easymacs-claude--busy nil
   "Non-nil when Claude is currently processing a request.")
+
+(defvar easymacs-claude--paused nil
+  "Non-nil when Claude process is suspended (SIGSTOP).")
+
+(defvar easymacs-claude--inline-overlay nil
+  "Overlay used for inline ghost text display.")
+
+(defvar easymacs-claude--inline-buffer nil
+  "The source buffer where inline ghost text should appear.")
+
+(defvar easymacs-claude--inline-point nil
+  "The buffer position where the invocation happened (overlay anchor).")
+
+(defvar easymacs-claude--inline-text ""
+  "Accumulated streaming text for the inline overlay.")
+
+(defvar easymacs-claude--inline-spinner-timer nil
+  "Timer for the inline spinner animation.")
+
+(defvar easymacs-claude--inline-spinner-index 0
+  "Current frame index for the inline spinner.")
+
+(defvar easymacs-claude--inline-status nil
+  "Current status message shown in the inline spinner (e.g. tool use info).")
+
+(defvar easymacs-claude--last-summary nil
+  "Summary string from the last completed Claude result.")
 
 (defun easymacs-claude--spinner-start ()
   "Start the spinner animation in the Claude buffer header line."
@@ -113,6 +152,83 @@
       (with-current-buffer buf
         (setq header-line-format
               (propertize " ✓ Claude idle" 'face 'easymacs-claude-added-face))))))
+
+;; Inline ghost text overlay keymap (C-g to dismiss)
+(defvar easymacs-claude-inline-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-g") #'easymacs-claude--inline-dismiss)
+    map)
+  "Keymap active on the inline ghost text overlay.")
+
+(defun easymacs-claude--inline-create-overlay ()
+  "Create the ghost text overlay at `easymacs-claude--inline-point'."
+  (easymacs-claude--inline-delete-overlay)
+  (when (and easymacs-claude--inline-buffer
+             (buffer-live-p easymacs-claude--inline-buffer)
+             easymacs-claude--inline-point)
+    (with-current-buffer easymacs-claude--inline-buffer
+      (let* ((eol (save-excursion
+                     (goto-char easymacs-claude--inline-point)
+                     (line-end-position)))
+             (ov (make-overlay eol eol)))
+        (overlay-put ov 'easymacs-claude-inline t)
+        (overlay-put ov 'priority 100)
+        (overlay-put ov 'keymap easymacs-claude-inline-map)
+        (setq easymacs-claude--inline-overlay ov)))))
+
+(defun easymacs-claude--inline-update ()
+  "Update the inline ghost overlay with current text and status."
+  (when (and easymacs-claude--inline-overlay
+             (overlay-buffer easymacs-claude--inline-overlay))
+    (let* ((frame (nth easymacs-claude--inline-spinner-index
+                       easymacs-claude--spinner-frames))
+           (status-line (if easymacs-claude--inline-status
+                            (format "%s %s" frame easymacs-claude--inline-status)
+                          (format "%s Claude is thinking..." frame)))
+           (content (if (string-empty-p easymacs-claude--inline-text)
+                        status-line
+                      (concat easymacs-claude--inline-text "\n" status-line)))
+           (display-text (propertize (concat "\n" content)
+                                     'face 'easymacs-claude-ghost-face
+                                     'cursor t)))
+      (overlay-put easymacs-claude--inline-overlay 'after-string display-text))))
+
+(defun easymacs-claude--inline-delete-overlay ()
+  "Remove the inline ghost text overlay."
+  (when easymacs-claude--inline-overlay
+    (delete-overlay easymacs-claude--inline-overlay)
+    (setq easymacs-claude--inline-overlay nil)))
+
+(defun easymacs-claude--inline-dismiss ()
+  "Dismiss the inline ghost text overlay."
+  (interactive)
+  (easymacs-claude--inline-delete-overlay)
+  (easymacs-claude--inline-spinner-stop))
+
+(defun easymacs-claude--inline-spinner-start ()
+  "Start an inline spinner as ghost text at the invocation point."
+  (easymacs-claude--inline-spinner-stop)
+  (easymacs-claude--inline-create-overlay)
+  (setq easymacs-claude--inline-spinner-index 0
+        easymacs-claude--inline-text ""
+        easymacs-claude--inline-status nil)
+  (setq easymacs-claude--inline-spinner-timer
+        (run-with-timer 0 0.1 #'easymacs-claude--inline-spinner-update)))
+
+(defun easymacs-claude--inline-spinner-update ()
+  "Update the inline spinner animation frame and refresh overlay."
+  (when (and easymacs-claude--inline-overlay
+             (overlay-buffer easymacs-claude--inline-overlay))
+    (setq easymacs-claude--inline-spinner-index
+          (mod (1+ easymacs-claude--inline-spinner-index)
+               (length easymacs-claude--spinner-frames)))
+    (easymacs-claude--inline-update)))
+
+(defun easymacs-claude--inline-spinner-stop ()
+  "Stop the inline spinner timer."
+  (when easymacs-claude--inline-spinner-timer
+    (cancel-timer easymacs-claude--inline-spinner-timer)
+    (setq easymacs-claude--inline-spinner-timer nil)))
 
 (defun easymacs-claude--build-context ()
   "Build context string with current file and position."
@@ -211,7 +327,9 @@
         (easymacs-claude--insert " * " 'easymacs-claude-tool-face)
         (easymacs-claude--insert "read " 'easymacs-claude-tool-face)
         (easymacs-claude--insert (file-name-nondirectory (or file-path "?")) 'easymacs-claude-file-face)
-        (easymacs-claude--insert "\n")))
+        (easymacs-claude--insert "\n")
+        (setq easymacs-claude--inline-status
+              (format "reading %s..." (file-name-nondirectory (or file-path "?"))))))
      ((equal tool-name "Edit")
       (let ((file (or (alist-get 'file_path input) "unknown"))
             (old-str (alist-get 'old_string input))
@@ -220,15 +338,21 @@
         (easymacs-claude--insert " * " 'easymacs-claude-tool-face)
         (easymacs-claude--insert "edit " 'easymacs-claude-tool-face)
         (easymacs-claude--insert (file-name-nondirectory file) 'easymacs-claude-file-face)
-        (easymacs-claude--insert "\n")))
+        (easymacs-claude--insert "\n")
+        (setq easymacs-claude--inline-status
+              (format "editing %s..." (file-name-nondirectory file)))))
      ((equal tool-name "Write")
       (let ((file-path (alist-get 'file_path input)))
         (easymacs-claude--insert " * " 'easymacs-claude-tool-face)
         (easymacs-claude--insert "write " 'easymacs-claude-tool-face)
         (easymacs-claude--insert (file-name-nondirectory (or file-path "?")) 'easymacs-claude-file-face)
-        (easymacs-claude--insert "\n")))
+        (easymacs-claude--insert "\n")
+        (setq easymacs-claude--inline-status
+              (format "writing %s..." (file-name-nondirectory (or file-path "?"))))))
      (t
-      (easymacs-claude--insert (format " * %s\n" (downcase tool-name)) 'easymacs-claude-tool-face)))))
+      (easymacs-claude--insert (format " * %s\n" (downcase tool-name)) 'easymacs-claude-tool-face)
+      (setq easymacs-claude--inline-status
+            (format "%s..." (downcase tool-name)))))))
 
 (defun easymacs-claude--handle-assistant (json)
   "Handle an assistant message JSON."
@@ -242,7 +366,13 @@
             (let ((text (alist-get 'text item)))
               (easymacs-claude--insert text)
               (unless (string-suffix-p "\n" text)
-                (easymacs-claude--insert "\n"))))
+                (easymacs-claude--insert "\n"))
+              ;; Accumulate for inline overlay
+              (when (and (eq easymacs-claude-display-mode 'inline)
+                         easymacs-claude--inline-overlay
+                         (overlay-buffer easymacs-claude--inline-overlay))
+                (setq easymacs-claude--inline-text
+                      (concat easymacs-claude--inline-text text)))))
            ((equal item-type "tool_use")
             (easymacs-claude--handle-tool-use item))))))))
 
@@ -267,7 +397,14 @@
           (let* ((delta (alist-get 'delta json))
                  (delta-type (alist-get 'type delta)))
             (when (equal delta-type "text_delta")
-              (easymacs-claude--insert (alist-get 'text delta)))))
+              (let ((text (alist-get 'text delta)))
+                (easymacs-claude--insert text)
+                ;; Accumulate text for inline overlay (spinner timer refreshes display)
+                (when (and (eq easymacs-claude-display-mode 'inline)
+                           easymacs-claude--inline-overlay
+                           (overlay-buffer easymacs-claude--inline-overlay))
+                  (setq easymacs-claude--inline-text
+                        (concat easymacs-claude--inline-text text)))))))
          ;; Init message
          ((and (equal type "system") (equal subtype "init"))
           (easymacs-claude--insert
@@ -290,17 +427,19 @@
                    'easymacs-claude-error-face))))))
          ;; Result summary
          ((equal type "result")
-          (let ((cost (alist-get 'total_cost_usd json))
-                (turns (alist-get 'num_turns json))
-                (edits (length easymacs-claude--edits))
-                (files (length (seq-uniq (mapcar #'car easymacs-claude--edits)))))
+          (let* ((cost (alist-get 'total_cost_usd json))
+                 (turns (alist-get 'num_turns json))
+                 (edits (length easymacs-claude--edits))
+                 (files (length (seq-uniq (mapcar #'car easymacs-claude--edits))))
+                 (summary (format "%s turn(s) | $%.4f%s"
+                                  turns
+                                  (or cost 0)
+                                  (if (> edits 0)
+                                      (format " | %d edit(s) in %d file(s)" edits files)
+                                    ""))))
+            (setq easymacs-claude--last-summary summary)
             (easymacs-claude--insert
-             (format "-- %s turn(s) | $%.4f%s --\n"
-                     turns
-                     (or cost 0)
-                     (if (> edits 0)
-                         (format " | %d edit(s) in %d file(s)" edits files)
-                       ""))
+             (format "-- %s --\n" summary)
              'easymacs-claude-summary-face))))
         t) ; return t on success
     (error nil))) ; return nil on parse error
@@ -329,8 +468,22 @@
       (setq easymacs-claude--process-line-buffer
             (assq-delete-all proc easymacs-claude--process-line-buffer)))
     (easymacs-claude--spinner-stop)
+    (easymacs-claude--inline-spinner-stop)
     (setq easymacs-claude-session-active t)
     (setq easymacs-claude--busy nil)
+    (setq easymacs-claude--paused nil)
+    ;; In inline mode, dismiss overlay and show final message in minibuffer
+    (when (eq easymacs-claude-display-mode 'inline)
+      (easymacs-claude--inline-delete-overlay)
+      (let* ((summary (or easymacs-claude--last-summary "finished"))
+             (response (string-trim easymacs-claude--inline-text))
+             (first-line (car (split-string response "\n" t)))
+             (truncated (if (and first-line (> (length first-line) 80))
+                            (concat (substring first-line 0 80) "...")
+                          first-line)))
+        (if (and truncated (not (string-empty-p truncated)))
+            (message "Claude [%s]: %s" summary truncated)
+          (message "Claude done — %s" summary))))
     (easymacs-claude--show-diff)
     (run-hooks 'easymacs-claude-after-edit-hook)
     ;; Process next item in queue if any
@@ -339,6 +492,7 @@
 (defun easymacs-claude--run-prompt (prompt source-file)
   "Actually run PROMPT for SOURCE-FILE. Internal function."
   (let* ((source-buf (find-buffer-visiting source-file))
+         (inline-mode-p (eq easymacs-claude-display-mode 'inline))
          (context (format "File: %s\nLine: %d\nMode: %s"
                           source-file
                           (if source-buf
@@ -363,15 +517,23 @@
       (insert (propertize "<you> " 'face 'easymacs-claude-user-face))
       (insert prompt)
       (insert (propertize "\n<claude> " 'face 'easymacs-claude-assistant-face)))
-    (let ((claude-win (get-buffer-window output-buffer t)))
-      (unless claude-win
-        ;; Not visible, split once to the right
-        (setq claude-win (split-window nil nil 'right))
-        (set-window-buffer claude-win output-buffer))
-      ;; Scroll to end
-      (with-selected-window claude-win
-        (goto-char (point-max))))
-    (easymacs-claude--spinner-start)
+    (if inline-mode-p
+        ;; Inline mode: show ghost text at cursor, no window split
+        (progn
+          (setq easymacs-claude--inline-buffer source-buf
+                easymacs-claude--inline-point
+                (if source-buf
+                    (with-current-buffer source-buf (point))
+                  (point)))
+          (easymacs-claude--inline-spinner-start))
+      ;; Buffer mode: show *Claude* in a side window
+      (let ((claude-win (get-buffer-window output-buffer t)))
+        (unless claude-win
+          (setq claude-win (split-window nil nil 'right))
+          (set-window-buffer claude-win output-buffer))
+        (with-selected-window claude-win
+          (goto-char (point-max))))
+      (easymacs-claude--spinner-start))
     (condition-case err
         (let ((proc (start-process-shell-command "claude" nil cmd)))
           (set-process-filter proc #'easymacs-claude--filter)
@@ -379,6 +541,8 @@
       (error
        (setq easymacs-claude--busy nil)
        (easymacs-claude--spinner-stop)
+       (easymacs-claude--inline-spinner-stop)
+       (easymacs-claude--inline-delete-overlay)
        (easymacs-claude--insert
         (format "\n[Failed to start Claude: %s]\n" (error-message-string err))
         'easymacs-claude-error-face)))))
@@ -428,6 +592,50 @@ If Claude is busy, the prompt is queued and will run when idle."
               (revert-buffer t t t))))
         (message "Reverted to pre-Claude state."))
     (user-error "No Claude backup available for this file")))
+
+(defun easymacs-claude-toggle-display-mode ()
+  "Toggle between buffer and inline display modes."
+  (interactive)
+  (setq easymacs-claude-display-mode
+        (if (eq easymacs-claude-display-mode 'buffer) 'inline 'buffer))
+  (message "Claude display mode: %s" easymacs-claude-display-mode))
+
+(defun easymacs-claude-interrupt ()
+  "Toggle pause/resume of the running Claude process."
+  (interactive)
+  (let ((proc (get-process "claude")))
+    (cond
+     ((not (and proc (process-live-p proc)))
+      (user-error "No Claude process running"))
+     (easymacs-claude--paused
+      (signal-process proc 'CONT)
+      (setq easymacs-claude--paused nil)
+      (easymacs-claude--spinner-start)
+      (message "Claude resumed."))
+     (t
+      (signal-process proc 'STOP)
+      (setq easymacs-claude--paused t)
+      (easymacs-claude--spinner-stop)
+      (easymacs-claude--inline-spinner-stop)
+      (easymacs-claude--insert "\n[Paused]\n" 'easymacs-claude-tool-face)
+      (message "Claude paused.")))))
+
+(defun easymacs-claude-stop ()
+  "Kill the running Claude process and clear the queue."
+  (interactive)
+  (let ((proc (get-process "claude")))
+    (when (and proc (process-live-p proc))
+      (when easymacs-claude--paused
+        (signal-process proc 'CONT))
+      (kill-process proc)))
+  (setq easymacs-claude--queue nil
+        easymacs-claude--busy nil
+        easymacs-claude--paused nil)
+  (easymacs-claude--spinner-stop)
+  (easymacs-claude--inline-spinner-stop)
+  (easymacs-claude--inline-delete-overlay)
+  (easymacs-claude--insert "\n[Stopped by user]\n" 'easymacs-claude-error-face)
+  (message "Claude stopped."))
 
 (provide 'easymacs-claude)
 ;;; easymacs-claude.el ends here
