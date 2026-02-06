@@ -29,6 +29,11 @@
         use-package-expand-minimally t))
 (setq frame-resize-pixelwise t)
 
+(use-package exec-path-from-shell
+  :config
+  (when (memq window-system '(mac ns x))
+    (exec-path-from-shell-initialize)))
+
 ;; Custom group and variables
 (defgroup easymacs nil
   "Opinionated Emacs config for Maxime Rousseau."
@@ -248,6 +253,7 @@
   (global-set-key (kbd "<escape>") #'god-mode-all)
   (setq god-exempt-major-modes nil)
   (setq god-exempt-predicates nil)
+  (setq god-exempt-major-modes '(magit-status-mode magit-diff-mode magit-log-mode dired-mode))
   (defun my-god-mode-update-cursor-type ()
 	(setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
   (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
@@ -309,6 +315,7 @@
           (lambda ()
             (setq-local indent-tabs-mode nil
                         tab-width 2
+                        python-indent-offset 2
                         py-indent-tabs-mode t)
             (add-hook 'before-save-hook #'delete-trailing-whitespace nil t)))
 

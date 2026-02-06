@@ -1,11 +1,4 @@
 ;;; easymacs-claude.el --- Claude Code integration for Easymacs -*- lexical-binding: t -*-
-
-;;; Commentary:
-;; Provides Claude Code integration with streaming output and diff review.
-;; IRC-style message formatting for clean output.
-
-;;; Code:
-
 (require 'json)
 (require 'diff)
 
@@ -153,12 +146,14 @@
         (setq header-line-format
               (propertize " ✓ Claude idle" 'face 'easymacs-claude-added-face))))))
 
-;; Inline ghost text overlay keymap (C-g to dismiss)
-(defvar easymacs-claude-inline-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-g") #'easymacs-claude--inline-dismiss)
-    map)
-  "Keymap active on the inline ghost text overlay.")
+(defun easymacs-claude--keyboard-quit-advice (&rest _)
+  "Dismiss inline overlay when C-g is pressed."
+  (when (and easymacs-claude--inline-overlay
+             (overlay-buffer easymacs-claude--inline-overlay))
+    (easymacs-claude--inline-dismiss)))
+
+(advice-add 'keyboard-quit :before #'easymacs-claude--keyboard-quit-advice)
+
 
 (defun easymacs-claude--inline-create-overlay ()
   "Create the ghost text overlay at `easymacs-claude--inline-point'."
@@ -168,30 +163,24 @@
              easymacs-claude--inline-point)
     (with-current-buffer easymacs-claude--inline-buffer
       (let* ((eol (save-excursion
-                     (goto-char easymacs-claude--inline-point)
-                     (line-end-position)))
+                    (goto-char easymacs-claude--inline-point)
+                    (line-end-position)))
              (ov (make-overlay eol eol)))
         (overlay-put ov 'easymacs-claude-inline t)
         (overlay-put ov 'priority 100)
-        (overlay-put ov 'keymap easymacs-claude-inline-map)
         (setq easymacs-claude--inline-overlay ov)))))
 
 (defun easymacs-claude--inline-update ()
-  "Update the inline ghost overlay with current text and status."
+  "Update the inline ghost overlay with the latest status."
   (when (and easymacs-claude--inline-overlay
              (overlay-buffer easymacs-claude--inline-overlay))
     (let* ((frame (nth easymacs-claude--inline-spinner-index
                        easymacs-claude--spinner-frames))
-           (status-line (if easymacs-claude--inline-status
-                            (format "%s %s" frame easymacs-claude--inline-status)
-                          (format "%s Claude is thinking..." frame)))
-           (content (if (string-empty-p easymacs-claude--inline-text)
-                        status-line
-                      (concat easymacs-claude--inline-text "\n" status-line)))
-           (display-text (propertize (concat "\n" content)
-                                     'face 'easymacs-claude-ghost-face
-                                     'cursor t)))
+           (status (or easymacs-claude--inline-status "Claude is thinking..."))
+           (display-text (propertize (format "\n%s %s" frame status)
+                                     'face 'easymacs-claude-ghost-face)))
       (overlay-put easymacs-claude--inline-overlay 'after-string display-text))))
+
 
 (defun easymacs-claude--inline-delete-overlay ()
   "Remove the inline ghost text overlay."
@@ -367,12 +356,13 @@
               (easymacs-claude--insert text)
               (unless (string-suffix-p "\n" text)
                 (easymacs-claude--insert "\n"))
-              ;; Accumulate for inline overlay
-              (when (and (eq easymacs-claude-display-mode 'inline)
-                         easymacs-claude--inline-overlay
-                         (overlay-buffer easymacs-claude--inline-overlay))
-                (setq easymacs-claude--inline-text
-                      (concat easymacs-claude--inline-text text)))))
+              ;; Update inline status with first line of latest text
+              (setq easymacs-claude--inline-text
+                    (concat easymacs-claude--inline-text text))
+              (setq easymacs-claude--inline-status
+                    (truncate-string-to-width
+                     (car (split-string (string-trim easymacs-claude--inline-text) "\n" t))
+                     80 nil nil "..."))))
            ((equal item-type "tool_use")
             (easymacs-claude--handle-tool-use item))))))))
 
@@ -399,12 +389,13 @@
             (when (equal delta-type "text_delta")
               (let ((text (alist-get 'text delta)))
                 (easymacs-claude--insert text)
-                ;; Accumulate text for inline overlay (spinner timer refreshes display)
-                (when (and (eq easymacs-claude-display-mode 'inline)
-                           easymacs-claude--inline-overlay
-                           (overlay-buffer easymacs-claude--inline-overlay))
-                  (setq easymacs-claude--inline-text
-                        (concat easymacs-claude--inline-text text)))))))
+                ;; Update inline status with latest text chunk
+                (setq easymacs-claude--inline-text
+                      (concat easymacs-claude--inline-text text))
+                (setq easymacs-claude--inline-status
+                      (truncate-string-to-width
+                       (car (split-string (string-trim easymacs-claude--inline-text) "\n" t))
+                       80 nil nil "..."))))))
          ;; Init message
          ((and (equal type "system") (equal subtype "init"))
           (easymacs-claude--insert
@@ -472,18 +463,19 @@
     (setq easymacs-claude-session-active t)
     (setq easymacs-claude--busy nil)
     (setq easymacs-claude--paused nil)
-    ;; In inline mode, dismiss overlay and show final message in minibuffer
+    ;; In inline mode, show final status and keep overlay until C-g
     (when (eq easymacs-claude-display-mode 'inline)
-      (easymacs-claude--inline-delete-overlay)
-      (let* ((summary (or easymacs-claude--last-summary "finished"))
-             (response (string-trim easymacs-claude--inline-text))
-             (first-line (car (split-string response "\n" t)))
-             (truncated (if (and first-line (> (length first-line) 80))
-                            (concat (substring first-line 0 80) "...")
-                          first-line)))
-        (if (and truncated (not (string-empty-p truncated)))
-            (message "Claude [%s]: %s" summary truncated)
-          (message "Claude done — %s" summary))))
+      (when (and easymacs-claude--inline-overlay
+                 (overlay-buffer easymacs-claude--inline-overlay))
+        (let* ((summary (or easymacs-claude--last-summary "finished"))
+               (response (string-trim easymacs-claude--inline-text))
+               (display-text (if (string-empty-p response)
+                                 (propertize (format "\n✓ %s" summary)
+                                             'face 'easymacs-claude-ghost-face)
+                               (propertize (concat "\n✓ " response)
+                                           'face 'easymacs-claude-ghost-face))))
+          (overlay-put easymacs-claude--inline-overlay 'after-string display-text)
+          (message "Claude done [%s] — C-g to dismiss" summary))))
     (easymacs-claude--show-diff)
     (run-hooks 'easymacs-claude-after-edit-hook)
     ;; Process next item in queue if any
