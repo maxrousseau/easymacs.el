@@ -252,8 +252,8 @@
   :config
   (global-set-key (kbd "<escape>") #'god-mode-all)
   (setq god-exempt-major-modes nil)
-  (setq god-exempt-predicates nil)
-  (setq god-exempt-major-modes '(magit-status-mode magit-diff-mode magit-log-mode dired-mode))
+  (setq god-exempt-predicates
+        (list (lambda () (derived-mode-p 'magit-mode 'dired-mode))))
   (defun my-god-mode-update-cursor-type ()
 	(setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
   (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
