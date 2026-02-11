@@ -251,7 +251,7 @@
       (if (> (easymacs-claude--review-pending) 0)
           (easymacs-claude-review-next)
         (message "Claude review complete.")
-        (easymacs-claude-review-clear))))))
+        (easymacs-claude-review-clear)))))
 
 (defun easymacs-claude-review-start ()
   "Create a review queue for the current Claude edit session."
