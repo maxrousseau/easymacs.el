@@ -3,6 +3,14 @@
 (require 'diff)
 (require 'subr-x)
 
+(defface easymacs-claude-review-added-face
+  '((t :inherit diff-added :foreground unspecified :weight normal :slant normal :extend t))
+  "Face for added hunks in the Claude review queue.")
+
+(defface easymacs-claude-review-removed-face
+  '((t :inherit diff-removed :foreground unspecified :weight normal :slant normal :extend t))
+  "Face for removed hunks in the Claude review queue.")
+
 (defcustom easymacs-claude-review-queue t
   "When non-nil, build a review queue after Claude edits."
   :type 'boolean
@@ -112,7 +120,7 @@
   "Format removed LINES for inline display."
   (when lines
     (let ((text (mapconcat (lambda (l) (concat "- " l)) lines "\n")))
-      (concat (propertize text 'face 'easymacs-claude-removed-face) "\n"))))
+      (concat (propertize text 'face 'easymacs-claude-review-removed-face) "\n"))))
 
 (defun easymacs-claude--review-make-item (hunk)
   "Create a review item plist from HUNK at point in the current buffer."
@@ -138,7 +146,7 @@
          (removed-overlay nil))
     (when (and addedp (> after-count 0))
       (let ((ov (make-overlay start-pos end-pos)))
-        (overlay-put ov 'face 'easymacs-claude-added-face)
+        (overlay-put ov 'face 'easymacs-claude-review-added-face)
         (overlay-put ov 'easymacs-claude-review t)
         (push ov overlays)))
     (when removed-lines
