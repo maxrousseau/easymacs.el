@@ -94,8 +94,8 @@
              ((buffer-live-p buf))
              (pt easymacs-claude--inline-point))
     (with-current-buffer buf
-      (let* ((eol (save-excursion (goto-char pt) (line-end-position)))
-             (ov (make-overlay eol eol)))
+      (let* ((bol (save-excursion (goto-char pt) (line-beginning-position)))
+             (ov (make-overlay bol bol)))
         (overlay-put ov 'easymacs-claude-inline t)
         (overlay-put ov 'priority 100)
         (setq easymacs-claude--inline-overlay ov)))))
@@ -106,9 +106,9 @@
     (let* ((frame (nth easymacs-claude--inline-spinner-index
                        easymacs-claude--spinner-frames))
            (status (or easymacs-claude--inline-status "Claude is thinking..."))
-           (display-text (propertize (format "\n%s %s" frame status)
+           (display-text (propertize (format "%s %s\n" frame status)
                                      'face 'easymacs-claude-ghost-face)))
-      (overlay-put ov 'after-string display-text))))
+      (overlay-put ov 'before-string display-text))))
 (defun easymacs-claude--inline-delete-overlay ()
   "Remove the inline ghost text overlay."
   (when easymacs-claude--inline-overlay
@@ -336,10 +336,10 @@
     (let* ((summary (or easymacs-claude--last-summary "finished"))
            (response (string-trim easymacs-claude--inline-text))
            (display-text (if (string-empty-p response)
-                             (format "\n✓ %s" summary)
-                           (concat "\n✓ " response))))
-      (overlay-put easymacs-claude--inline-overlay 'after-string
-                   (propertize display-text 'face 'easymacs-claude-ghost-face))
+                             (format "✓ %s" summary)
+                           (concat "✓ " response))))
+      (overlay-put easymacs-claude--inline-overlay 'before-string
+                   (propertize (concat display-text "\n") 'face 'easymacs-claude-ghost-face))
       (message "Claude done [%s] — C-g to dismiss" summary))))
 (defun easymacs-claude--sentinel (proc event)
   "Handle Claude PROC completion EVENT."

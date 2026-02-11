@@ -2,6 +2,7 @@
 
 (require 'diff)
 (require 'subr-x)
+(require 'cl-lib)
 
 (defface easymacs-claude-review-added-face
   '((t :inherit diff-added :foreground unspecified :weight normal :slant normal :extend t))
@@ -10,6 +11,14 @@
 (defface easymacs-claude-review-removed-face
   '((t :inherit diff-removed :foreground unspecified :weight normal :slant normal :extend t))
   "Face for removed hunks in the Claude review queue.")
+
+(defface easymacs-claude-review-count-added-face
+  '((t :inherit success :weight bold))
+  "Face for added-line counts in the modeline indicator.")
+
+(defface easymacs-claude-review-count-removed-face
+  '((t :inherit error :weight bold))
+  "Face for removed-line counts in the modeline indicator.")
 
 (defcustom easymacs-claude-review-queue t
   "When non-nil, build a review queue after Claude edits."
@@ -37,13 +46,34 @@
         (when (aref items i)
           (setq count (1+ count)))))))
 
+(defun easymacs-claude--review-pending-line-counts ()
+  "Return `(ADDED . REMOVED)' for pending review items."
+  (let ((items easymacs-claude--review-items)
+        (added 0)
+        (removed 0))
+    (when (vectorp items)
+      (dotimes (i (length items))
+        (when-let ((item (aref items i)))
+          (setq added (+ added (or (plist-get item :added-count) 0))
+                removed (+ removed (or (plist-get item :removed-count) 0))))))
+    (cons added removed)))
+
 (defun easymacs-claude--review-lighter ()
   "Modeline lighter for the review queue."
   (if (and (vectorp easymacs-claude--review-items)
            (> easymacs-claude--review-total 0))
-      (format " ClaudeReview:%d/%d"
-              (easymacs-claude--review-pending)
-              easymacs-claude--review-total)
+      (let* ((counts (easymacs-claude--review-pending-line-counts))
+             (added (car counts))
+             (removed (cdr counts))
+             (added-text (propertize (format "+%d" added)
+                                     'face 'easymacs-claude-review-count-added-face))
+             (removed-text (propertize (format "-%d" removed)
+                                       'face 'easymacs-claude-review-count-removed-face)))
+        (concat (format " ClaudeReview:%d/%d "
+                        (easymacs-claude--review-pending)
+                        easymacs-claude--review-total)
+                added-text
+                removed-text))
     " ClaudeReview:0/0"))
 
 (defvar easymacs-claude-review-mode-map
@@ -126,10 +156,13 @@
   "Create a review item plist from HUNK at point in the current buffer."
   (let* ((start-line (plist-get hunk :start))
          (after-lines (plist-get hunk :after-lines))
+         (after-kinds (plist-get hunk :after-kinds))
          (before-lines (plist-get hunk :before-lines))
          (removed-lines (plist-get hunk :removed-lines))
          (after-count (length after-lines))
-         (addedp (memq 'added (plist-get hunk :after-kinds)))
+         (addedp (memq 'added after-kinds))
+         (added-count (cl-count 'added after-kinds :test #'eq))
+         (removed-count (length removed-lines))
          (start-pos (save-excursion
                       (goto-char (point-min))
                       (forward-line (max 0 (1- start-line)))
@@ -158,6 +191,8 @@
           :end (copy-marker end-pos t)
           :before before-text
           :after after-text
+          :added-count added-count
+          :removed-count removed-count
           :overlays overlays
           :removed-overlay removed-overlay)))
 
