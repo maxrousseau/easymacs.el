@@ -80,10 +80,24 @@
                 removed-text))
     " ClaudeReview:0/0"))
 
+(defun easymacs-claude--review-mood-line-segment ()
+  "Return a compact mood-line segment for pending review deltas."
+  (when (and easymacs-claude-review-mode
+             (> easymacs-claude--review-total 0))
+    (let* ((counts (easymacs-claude--review-pending-line-counts))
+           (added (car counts))
+           (removed (cdr counts))
+           (added-text (propertize (format "+%d" added)
+                                   'face 'easymacs-claude-review-count-added-face))
+           (removed-text (propertize (format "-%d" removed)
+                                     'face 'easymacs-claude-review-count-removed-face)))
+      (concat "CR:" added-text removed-text))))
+
 (defun easymacs-claude--review-mode-line-value ()
   "Return mode-line text for the current buffer's review queue."
   (when (and easymacs-claude-review-mode
-             (> easymacs-claude--review-total 0))
+             (> easymacs-claude--review-total 0)
+             (not (bound-and-true-p mood-line-mode)))
     (easymacs-claude--review-lighter)))
 
 (defun easymacs-claude--review-install-mode-line ()
@@ -97,6 +111,19 @@
 (defun easymacs-claude--review-refresh-mode-line ()
   "Refresh mode line after review state changes."
   (force-mode-line-update t))
+
+(defun easymacs-claude--review-install-mood-line-segment ()
+  "Append Claude review segment to mood-line's right side."
+  (when (boundp 'mood-line-format)
+    (let* ((segment '(easymacs-claude--review-mood-line-segment . "  "))
+           (left (car mood-line-format))
+           (right (cadr mood-line-format)))
+      (when (and (listp right)
+                 (not (member segment right)))
+        (setq mood-line-format (list left (append right (list segment))))
+        (when (fboundp 'mood-line--refresh)
+          (mood-line--refresh))
+        (easymacs-claude--review-refresh-mode-line)))))
 
 (defvar easymacs-claude-review-mode-map
   (let ((map (make-sparse-keymap)))
@@ -365,6 +392,9 @@
       (easymacs-claude--show-diff))))
 
 (easymacs-claude--review-install-mode-line)
+(easymacs-claude--review-install-mood-line-segment)
+(with-eval-after-load 'mood-line
+  (easymacs-claude--review-install-mood-line-segment))
 
 (provide 'easymacs-claude-review)
 ;;; easymacs-claude-review.el ends here
