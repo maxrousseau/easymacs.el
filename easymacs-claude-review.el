@@ -80,10 +80,24 @@
                 removed-text))
     " ClaudeReview:0/0"))
 
+(defun easymacs-claude--review-mood-line-segment ()
+  "Return mood-line segment for review line deltas."
+  (when (and easymacs-claude-review-mode
+             (> easymacs-claude--review-total 0))
+    (let* ((counts (easymacs-claude--review-pending-line-counts))
+           (added (car counts))
+           (removed (cdr counts))
+           (added-text (propertize (format "+%d" added)
+                                   'face 'easymacs-claude-review-count-added-face))
+           (removed-text (propertize (format "-%d" removed)
+                                     'face 'easymacs-claude-review-count-removed-face)))
+      (concat "CR:" added-text removed-text))))
+
 (defun easymacs-claude--review-mode-line-value ()
   "Return mode-line text for the current buffer's review queue."
   (when (and easymacs-claude-review-mode
-             (> easymacs-claude--review-total 0))
+             (> easymacs-claude--review-total 0)
+             (not (bound-and-true-p mood-line-mode)))
     (easymacs-claude--review-lighter)))
 
 (defun easymacs-claude--review-install-mode-line ()
@@ -110,20 +124,57 @@
   (force-mode-line-update t))
 
 (defun easymacs-claude--review-sanitize-mood-line-format ()
-  "Remove legacy broken Claude review segment from `mood-line-format'."
+  "Remove legacy Claude review segments from `mood-line-format'."
   (when (and (boundp 'mood-line-format)
              (consp mood-line-format))
     (let* ((legacy '(easymacs-claude--review-mood-line-segment . "  "))
+           (segment '(easymacs-claude--review-mood-line-segment))
            (left (car mood-line-format))
            (right (cadr mood-line-format))
            (left2 (if (listp left)
-                      (cl-remove-if (lambda (seg) (equal seg legacy)) left)
+                      (cl-remove-if (lambda (seg) (or (equal seg legacy)
+                                                      (equal seg segment)))
+                                    left)
                     left))
-           (right2 (if (listp right)
-                       (cl-remove-if (lambda (seg) (equal seg legacy)) right)
-                     right)))
+           (right2
+            (if (listp right)
+                (let (out)
+                  (while right
+                    (let ((cur (car right))
+                          (next (cadr right)))
+                      (cond
+                       ((equal cur legacy)
+                        (setq right (cdr right)))
+                       ((equal cur segment)
+                        (setq right (cdr right))
+                        (when (equal (car right) "  ")
+                          (setq right (cdr right))))
+                       ((and (equal cur "  ")
+                             (or (equal next segment)
+                                 (null next)))
+                        (setq right (cdr right)))
+                       (t
+                        (push cur out)
+                        (setq right (cdr right))))))
+                  (nreverse out))
+              right)))
       (unless (and (equal left left2) (equal right right2))
         (setq mood-line-format (list left2 right2))
+        (when (fboundp 'mood-line--refresh)
+          (mood-line--refresh))
+        (easymacs-claude--review-refresh-mode-line)))))
+
+(defun easymacs-claude--review-install-mood-line-segment ()
+  "Install a dedicated review delta segment into `mood-line-format'."
+  (when (and (boundp 'mood-line-format)
+             (consp mood-line-format))
+    (let* ((segment '(easymacs-claude--review-mood-line-segment))
+           (left (car mood-line-format))
+           (right (cadr mood-line-format)))
+      (when (and (listp right)
+                 (not (member segment right)))
+        ;; Mood-line expects raw eval forms and separator strings, not cons cells.
+        (setq mood-line-format (list left (append right (list segment "  "))))
         (when (fboundp 'mood-line--refresh)
           (mood-line--refresh))
         (easymacs-claude--review-refresh-mode-line)))))
@@ -397,8 +448,10 @@
 (easymacs-claude--review-install-mode-line)
 (easymacs-claude--review-sanitize-mode-line-misc-info)
 (easymacs-claude--review-sanitize-mood-line-format)
+(easymacs-claude--review-install-mood-line-segment)
 (with-eval-after-load 'mood-line
-  (easymacs-claude--review-sanitize-mood-line-format))
+  (easymacs-claude--review-sanitize-mood-line-format)
+  (easymacs-claude--review-install-mood-line-segment))
 
 (provide 'easymacs-claude-review)
 ;;; easymacs-claude-review.el ends here
