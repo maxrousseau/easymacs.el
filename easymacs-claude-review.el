@@ -37,6 +37,10 @@
 (defvar-local easymacs-claude--review-index 0
   "Current review index in `easymacs-claude--review-items'.")
 
+(defvar easymacs-claude-review-mode-line
+  '(:eval (easymacs-claude--review-mode-line-value))
+  "Mode-line construct used to show Claude review progress.")
+
 (defun easymacs-claude--review-pending ()
   "Return the number of pending review items in the current buffer."
   (let ((items easymacs-claude--review-items)
@@ -76,6 +80,24 @@
                 removed-text))
     " ClaudeReview:0/0"))
 
+(defun easymacs-claude--review-mode-line-value ()
+  "Return mode-line text for the current buffer's review queue."
+  (when (and easymacs-claude-review-mode
+             (> easymacs-claude--review-total 0))
+    (easymacs-claude--review-lighter)))
+
+(defun easymacs-claude--review-install-mode-line ()
+  "Install Claude review indicator into `mode-line-misc-info'."
+  (let ((entry 'easymacs-claude-review-mode-line))
+    (unless (member entry (default-value 'mode-line-misc-info))
+      (setq-default mode-line-misc-info
+                    (append (default-value 'mode-line-misc-info)
+                            (list entry))))))
+
+(defun easymacs-claude--review-refresh-mode-line ()
+  "Refresh mode line after review state changes."
+  (force-mode-line-update t))
+
 (defvar easymacs-claude-review-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-a") #'easymacs-claude-review-accept)
@@ -88,7 +110,7 @@
 
 (define-minor-mode easymacs-claude-review-mode
   "Minor mode for reviewing Claude edits as a queue."
-  :lighter (:eval (easymacs-claude--review-lighter))
+  :lighter nil
   :keymap easymacs-claude-review-mode-map)
 
 (defun easymacs-claude--diff-text (old-file new-file)
@@ -213,7 +235,8 @@
   (setq easymacs-claude--review-items nil
         easymacs-claude--review-total 0
         easymacs-claude--review-index 0)
-  (easymacs-claude-review-mode -1))
+  (easymacs-claude-review-mode -1)
+  (easymacs-claude--review-refresh-mode-line))
 
 (defun easymacs-claude--review-current ()
   "Return the current review item or nil."
@@ -268,6 +291,7 @@
   (when-let ((item (easymacs-claude--review-current)))
     (easymacs-claude--review-clear-item item)
     (aset easymacs-claude--review-items easymacs-claude--review-index nil)
+    (easymacs-claude--review-refresh-mode-line)
     (if (> (easymacs-claude--review-pending) 0)
         (easymacs-claude-review-next)
       (message "Claude review complete.")
@@ -291,6 +315,7 @@
         (delete-region start end)
         (insert before))
       (aset easymacs-claude--review-items easymacs-claude--review-index nil)
+      (easymacs-claude--review-refresh-mode-line)
       (if (> (easymacs-claude--review-pending) 0)
           (easymacs-claude-review-next)
         (message "Claude review complete.")
@@ -321,9 +346,11 @@
             (if (> easymacs-claude--review-total 0)
                 (progn
                   (easymacs-claude-review-mode 1)
+                  (easymacs-claude--review-refresh-mode-line)
                   (easymacs-claude--review-goto 0)
                   (message "Claude review queue ready. C-c C-a accept, C-c C-r reject."))
               (easymacs-claude-review-mode -1)
+              (easymacs-claude--review-refresh-mode-line)
               (message "No Claude changes to review."))))))))
 
 (defun easymacs-claude-review-after-run ()
@@ -336,6 +363,8 @@
             (easymacs-claude--show-diff))))
     (when (fboundp 'easymacs-claude--show-diff)
       (easymacs-claude--show-diff))))
+
+(easymacs-claude--review-install-mode-line)
 
 (provide 'easymacs-claude-review)
 ;;; easymacs-claude-review.el ends here
