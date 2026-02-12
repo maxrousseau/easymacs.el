@@ -332,8 +332,12 @@
     (when (and (vectorp items) (>= index 0) (< index (length items)))
       (when-let ((item (aref items index)))
         (setq easymacs-claude--review-index index)
-        (goto-char (marker-position (plist-get item :start)))
-        (recenter)))))
+        (let ((pos (marker-position (plist-get item :start))))
+          (goto-char pos)
+          (when-let ((win (get-buffer-window (current-buffer) t)))
+            (with-selected-window win
+              (goto-char pos)
+              (recenter))))))))
 
 (defun easymacs-claude--review-find (start step)
   "Find the next pending item index from START moving by STEP."
