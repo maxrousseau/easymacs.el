@@ -45,6 +45,16 @@
   "Hook run after Claude finishes and the buffer is reverted.")
 (defvar easymacs-claude--source-file nil "Source file for current Claude invocation.")
 (defvar easymacs-claude--temp-file nil "Temp copy of source file before Claude edits.")
+(defvar easymacs-claude--run-root nil
+  "Directory used to resolve relative file paths for the active run.")
+(defvar easymacs-claude--run-backups nil
+  "Alist mapping edited files to pre-Claude temp backups for the active run.")
+(defvar easymacs-claude--last-run-backups nil
+  "Alist mapping edited files to pre-Claude temp backups from the last run.")
+(defvar easymacs-claude--run-file-exists nil
+  "Alist mapping edited files to whether they existed before the active run.")
+(defvar easymacs-claude--last-run-file-exists nil
+  "Alist mapping edited files to whether they existed before the last run.")
 (defvar easymacs-claude--edits nil "List of edits made during current Claude session.")
 (defconst easymacs-claude--spinner-frames
   '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
@@ -64,6 +74,7 @@
 (defvar easymacs-claude--inline-spinner-timer nil "Timer for the inline spinner animation.")
 (defvar easymacs-claude--inline-spinner-index 0 "Current frame index for the inline spinner.")
 (defvar easymacs-claude--inline-status nil "Current status message shown in the inline spinner.")
+(defvar easymacs-claude--inline-hidden nil "Non-nil when inline ghost text is hidden.")
 (defvar easymacs-claude--last-summary nil "Summary string from the last completed Claude result.")
 (defun easymacs-claude--insert (text &optional face)
   "Insert TEXT into the Claude output buffer with optional FACE."
@@ -76,17 +87,63 @@
         (with-selected-window win
           (goto-char (point-max))
           (recenter -1))))))
-(defun easymacs-claude--summary-line (text)
-  "Return a concise summary line from TEXT."
-  (let ((line (car (split-string (string-trim text) "\n" t))))
-    (when line
-      (truncate-string-to-width line 80 nil nil "..."))))
 (defun easymacs-claude--append-inline (text)
-  "Append TEXT to inline transcript and refresh status."
+  "Append TEXT to inline transcript and refresh full inline status."
   (setq easymacs-claude--inline-text (concat easymacs-claude--inline-text text))
-  (setq easymacs-claude--inline-status
-        (or (easymacs-claude--summary-line easymacs-claude--inline-text)
-            easymacs-claude--inline-status)))
+  (unless (string-empty-p easymacs-claude--inline-text)
+    (setq easymacs-claude--inline-status easymacs-claude--inline-text)))
+(defun easymacs-claude--normalize-file-path (file)
+  "Return FILE as an absolute path resolved from `easymacs-claude--run-root'."
+  (when (and (stringp file) (not (string-empty-p file)))
+    (expand-file-name file easymacs-claude--run-root)))
+(defun easymacs-claude--cleanup-backups (backups)
+  "Delete temp backup files listed in BACKUPS."
+  (dolist (entry backups)
+    (when-let ((temp-file (cdr entry)))
+      (when (file-exists-p temp-file)
+        (delete-file temp-file)))))
+(defun easymacs-claude--track-file (file)
+  "Ensure FILE has a pre-edit temp backup and return the normalized path."
+  (when-let ((path (easymacs-claude--normalize-file-path file)))
+    (unless (assoc path easymacs-claude--run-backups)
+      (let* ((ext (file-name-extension path))
+             (suffix (if ext (concat "." ext) ""))
+             (temp-file (make-temp-file "claude-backup-" nil suffix))
+             (existed-before (file-exists-p path)))
+        (if existed-before
+            (copy-file path temp-file t)
+          (with-temp-file temp-file))
+        (push (cons path temp-file) easymacs-claude--run-backups)
+        (push (cons path existed-before) easymacs-claude--run-file-exists)))
+    path))
+(defun easymacs-claude--prepare-run-state (source-file)
+  "Reset run state and capture initial backup for SOURCE-FILE."
+  (easymacs-claude--cleanup-backups easymacs-claude--last-run-backups)
+  (setq easymacs-claude--last-run-backups nil
+        easymacs-claude--last-run-file-exists nil
+        easymacs-claude--run-backups nil
+        easymacs-claude--run-file-exists nil
+        easymacs-claude--edits nil
+        easymacs-claude--run-root (file-name-directory source-file)
+        easymacs-claude--source-file source-file
+        easymacs-claude--temp-file nil)
+  (when-let ((tracked (easymacs-claude--track-file source-file)))
+    (setq easymacs-claude--source-file tracked
+          easymacs-claude--temp-file (cdr (assoc tracked easymacs-claude--run-backups)))))
+(defun easymacs-claude--backup-for-file (file)
+  "Return the most recent backup path for FILE, or nil if unavailable."
+  (cdr (assoc (expand-file-name file)
+              (or easymacs-claude--last-run-backups
+                  easymacs-claude--run-backups))))
+(defun easymacs-claude--file-existed-before-p (file)
+  "Return whether FILE existed before the tracked run, or `unknown'."
+  (let* ((path (expand-file-name file))
+         (cell (assoc path
+                      (or easymacs-claude--last-run-file-exists
+                          easymacs-claude--run-file-exists))))
+    (if cell
+        (cdr cell)
+      'unknown)))
 (defun easymacs-claude--inline-create-overlay ()
   "Create the ghost text overlay at `easymacs-claude--inline-point'."
   (easymacs-claude--inline-delete-overlay)
@@ -98,11 +155,14 @@
              (ov (make-overlay bol bol)))
         (overlay-put ov 'easymacs-claude-inline t)
         (overlay-put ov 'priority 100)
+        (overlay-put ov 'easymacs-claude-hidden nil)
+        (setq easymacs-claude--inline-hidden nil)
         (setq easymacs-claude--inline-overlay ov)))))
 (defun easymacs-claude--inline-update ()
   "Update the inline ghost overlay with the latest status."
   (when-let ((ov easymacs-claude--inline-overlay)
-             ((overlay-buffer ov)))
+             ((overlay-buffer ov))
+             ((not (overlay-get ov 'easymacs-claude-hidden))))
     (let* ((frame (nth easymacs-claude--inline-spinner-index
                        easymacs-claude--spinner-frames))
            (status (or easymacs-claude--inline-status "Claude is thinking..."))
@@ -113,7 +173,8 @@
   "Remove the inline ghost text overlay."
   (when easymacs-claude--inline-overlay
     (delete-overlay easymacs-claude--inline-overlay)
-    (setq easymacs-claude--inline-overlay nil)))
+    (setq easymacs-claude--inline-overlay nil
+          easymacs-claude--inline-hidden nil)))
 (defun easymacs-claude--inline-dismiss ()
   "Dismiss the inline ghost text overlay."
   (interactive)
@@ -125,7 +186,8 @@
   (easymacs-claude--inline-create-overlay)
   (setq easymacs-claude--inline-spinner-index 0
         easymacs-claude--inline-text ""
-        easymacs-claude--inline-status nil)
+        easymacs-claude--inline-status nil
+        easymacs-claude--inline-hidden nil)
   (setq easymacs-claude--inline-spinner-timer
         (run-with-timer 0 0.1 #'easymacs-claude--inline-spinner-update)))
 (defun easymacs-claude--inline-spinner-update ()
@@ -141,13 +203,42 @@
   (when easymacs-claude--inline-spinner-timer
     (cancel-timer easymacs-claude--inline-spinner-timer)
     (setq easymacs-claude--inline-spinner-timer nil)))
-(defun easymacs-claude--keyboard-quit-advice (&rest _)
-  "Dismiss inline overlay when C-g is pressed."
-  (when (and easymacs-claude--inline-overlay
-             (overlay-buffer easymacs-claude--inline-overlay))
-    (easymacs-claude--inline-dismiss)))
-
-(advice-add 'keyboard-quit :before #'easymacs-claude--keyboard-quit-advice)
+(defun easymacs-claude--inline-final-display ()
+  "Return finalized inline text for the ghost overlay."
+  (let* ((summary (or easymacs-claude--last-summary "finished"))
+         (response easymacs-claude--inline-text)
+         (display-text (if (string-empty-p response)
+                           (format "✓ %s" summary)
+                         (concat "✓ " response)))
+         (suffix (if (string-suffix-p "\n" display-text) "" "\n")))
+    (propertize (concat display-text suffix) 'face 'easymacs-claude-ghost-face)))
+(defun easymacs-claude--inline-show-final ()
+  "Show the finalized inline output when a run is complete."
+  (when-let ((ov easymacs-claude--inline-overlay)
+             ((overlay-buffer ov))
+             ((not (overlay-get ov 'easymacs-claude-hidden))))
+    (overlay-put ov 'before-string (easymacs-claude--inline-final-display))))
+(defun easymacs-claude-toggle-inline-ghost-text ()
+  "Toggle visibility of the current inline Claude ghost text."
+  (interactive)
+  (if (not (eq easymacs-claude-display-mode 'inline))
+      (message "Claude display mode is %s (switch to inline to toggle ghost text)."
+               easymacs-claude-display-mode)
+    (if (not (and easymacs-claude--inline-overlay
+                  (overlay-buffer easymacs-claude--inline-overlay)))
+        (message "No inline Claude ghost text to toggle.")
+      (setq easymacs-claude--inline-hidden (not easymacs-claude--inline-hidden))
+      (overlay-put easymacs-claude--inline-overlay
+                   'easymacs-claude-hidden
+                   easymacs-claude--inline-hidden)
+      (if easymacs-claude--inline-hidden
+          (progn
+            (overlay-put easymacs-claude--inline-overlay 'before-string nil)
+            (message "Claude ghost text hidden."))
+        (if easymacs-claude--busy
+            (easymacs-claude--inline-update)
+          (easymacs-claude--inline-show-final))
+        (message "Claude ghost text shown.")))))
 (defun easymacs-claude--spinner-start ()
   "Start the spinner animation in the Claude buffer header line."
   (easymacs-claude--spinner-stop)
@@ -181,18 +272,12 @@
       (with-current-buffer buf
         (setq header-line-format
               (propertize " ✓ Claude idle" 'face 'easymacs-claude-added-face))))))
-(defun easymacs-claude--save-temp-copy ()
-  "Save a temp copy of the current file for later diffing/reverting."
-  (when buffer-file-name
-    (when (and easymacs-claude--temp-file
-               (file-exists-p easymacs-claude--temp-file))
-      (delete-file easymacs-claude--temp-file))
-    (let* ((ext (file-name-extension buffer-file-name))
-           (suffix (if ext (concat "." ext) ""))
-           (temp-file (make-temp-file "claude-backup-" nil suffix)))
-      (copy-file buffer-file-name temp-file t)
-      (setq easymacs-claude--temp-file temp-file
-            easymacs-claude--edits nil))))
+(defun easymacs-claude--record-edit (verb file &optional old-string new-string)
+  "Track a file edit action VERB for FILE and update edit accounting."
+  (let ((tracked (easymacs-claude--track-file file)))
+    (when tracked
+      (push (list tracked old-string new-string) easymacs-claude--edits))
+    (easymacs-claude--note-tool verb (or tracked file))))
 (defun easymacs-claude--files-differ-p (file1 file2)
   "Return t if FILE1 and FILE2 have different contents."
   (not (string=
@@ -244,14 +329,23 @@
   (let ((tool-name (alist-get 'name item))
         (input (alist-get 'input item)))
     (pcase tool-name
-      ("Read" (easymacs-claude--note-tool "read" (alist-get 'file_path input)))
-      ("Write" (easymacs-claude--note-tool "write" (alist-get 'file_path input)))
-      ("Edit" (let ((file (or (alist-get 'file_path input) "unknown")))
-                (push (list file
-                            (alist-get 'old_string input)
-                            (alist-get 'new_string input))
-                      easymacs-claude--edits)
-                (easymacs-claude--note-tool "edit" file)))
+      ("Read" (easymacs-claude--note-tool "read" (easymacs-claude--normalize-file-path
+                                                 (alist-get 'file_path input))))
+      ("Write" (easymacs-claude--record-edit "write" (alist-get 'file_path input)))
+      ("Edit" (easymacs-claude--record-edit "edit"
+                                            (alist-get 'file_path input)
+                                            (alist-get 'old_string input)
+                                            (alist-get 'new_string input)))
+      ("MultiEdit"
+       (let ((file (alist-get 'file_path input))
+             (edits (alist-get 'edits input)))
+         (if (and edits (vectorp edits))
+             (dolist (edit (append edits nil))
+               (easymacs-claude--record-edit "multiedit"
+                                             file
+                                             (alist-get 'old_string edit)
+                                             (alist-get 'new_string edit)))
+           (easymacs-claude--record-edit "multiedit" file))))
       (_ (let ((verb (downcase tool-name)))
            (easymacs-claude--insert (format " * %s\n" verb)
                                     'easymacs-claude-tool-face)
@@ -333,14 +427,9 @@
   (when (and (eq easymacs-claude-display-mode 'inline)
              easymacs-claude--inline-overlay
              (overlay-buffer easymacs-claude--inline-overlay))
-    (let* ((summary (or easymacs-claude--last-summary "finished"))
-           (response (string-trim easymacs-claude--inline-text))
-           (display-text (if (string-empty-p response)
-                             (format "✓ %s" summary)
-                           (concat "✓ " response))))
-      (overlay-put easymacs-claude--inline-overlay 'before-string
-                   (propertize (concat display-text "\n") 'face 'easymacs-claude-ghost-face))
-      (message "Claude done [%s] — C-g to dismiss" summary))))
+    (let ((summary (or easymacs-claude--last-summary "finished")))
+      (easymacs-claude--inline-show-final)
+      (message "Claude done [%s]. C-; C-g toggles ghost text." summary))))
 (defun easymacs-claude--sentinel (proc event)
   "Handle Claude PROC completion EVENT."
   (when (string-match-p "finished\\|exited\\|killed" event)
@@ -349,6 +438,12 @@
         (easymacs-claude--process-json-line remaining))
       (setq easymacs-claude--process-line-buffer
             (assq-delete-all proc easymacs-claude--process-line-buffer)))
+    (let ((run-backups (nreverse easymacs-claude--run-backups)))
+      (setq easymacs-claude--last-run-backups run-backups
+            easymacs-claude--run-backups nil))
+    (let ((run-file-exists (nreverse easymacs-claude--run-file-exists)))
+      (setq easymacs-claude--last-run-file-exists run-file-exists
+            easymacs-claude--run-file-exists nil))
     (easymacs-claude--spinner-stop)
     (easymacs-claude--inline-spinner-stop)
     (setq easymacs-claude-session-active t
@@ -356,12 +451,14 @@
           easymacs-claude--paused nil)
     (easymacs-claude--finalize-inline)
     (if (fboundp 'easymacs-claude-review-after-run)
-        (easymacs-claude-review-after-run)
+        (easymacs-claude-review-after-run easymacs-claude--last-run-backups)
       (easymacs-claude--show-diff))
     (run-hooks 'easymacs-claude-after-edit-hook)
     (easymacs-claude--process-queue)))
 (defun easymacs-claude--run-prompt (prompt source-file)
   "Actually run PROMPT for SOURCE-FILE. Internal function."
+  (setq source-file (expand-file-name source-file))
+  (easymacs-claude--prepare-run-state source-file)
   (let* ((source-buf (find-buffer-visiting source-file))
          (line (if source-buf
                    (with-current-buffer source-buf (line-number-at-pos))
@@ -372,8 +469,7 @@
          (context (format "File: %s\nLine: %d\nMode: %s" source-file line mode))
          (full-prompt (concat context "\n---\n" prompt))
          (output-buffer (get-buffer-create "*Claude*"))
-         (allowed-tools (format "Edit:%s Read Glob Grep Task WebSearch WebFetch"
-                                source-file))
+         (allowed-tools "Edit MultiEdit Write Read Glob Grep Task WebSearch WebFetch")
          (cmd (format "claude -p %s --allowedTools %s --permission-mode acceptEdits --output-format stream-json --verbose%s"
                       (shell-quote-argument full-prompt)
                       (shell-quote-argument allowed-tools)
@@ -407,6 +503,9 @@
        (easymacs-claude--spinner-stop)
        (easymacs-claude--inline-spinner-stop)
        (easymacs-claude--inline-delete-overlay)
+       (easymacs-claude--cleanup-backups easymacs-claude--run-backups)
+       (setq easymacs-claude--run-backups nil
+             easymacs-claude--run-file-exists nil)
        (easymacs-claude--insert
         (format "\n[Failed to start Claude: %s]\n" (error-message-string err))
         'easymacs-claude-error-face)))))
@@ -423,7 +522,6 @@ If Claude is busy, the prompt is queued and will run when idle."
   (unless buffer-file-name
     (user-error "Buffer must be visiting a file"))
   (save-buffer)
-  (easymacs-claude--save-temp-copy)
   (let ((source-file buffer-file-name))
     (if easymacs-claude--busy
         (progn
@@ -439,18 +537,29 @@ If Claude is busy, the prompt is queued and will run when idle."
         easymacs-claude--edits nil)
   (message "Claude session reset. Next call starts fresh."))
 (defun easymacs-claude-revert ()
-  "Revert current file to the state before Claude's edits."
+  "Revert the current file to the pre-Claude state from the latest run."
   (interactive)
-  (if (and easymacs-claude--temp-file
-           (file-exists-p easymacs-claude--temp-file)
-           easymacs-claude--source-file)
-      (when (y-or-n-p "Revert file to pre-Claude state? ")
-        (copy-file easymacs-claude--temp-file easymacs-claude--source-file t)
-        (when-let ((buf (find-buffer-visiting easymacs-claude--source-file)))
-          (with-current-buffer buf
-            (revert-buffer t t t)))
-        (message "Reverted to pre-Claude state."))
-    (user-error "No Claude backup available for this file")))
+  (let* ((target-file (or (and buffer-file-name (expand-file-name buffer-file-name))
+                          easymacs-claude--source-file))
+         (backup-file (and target-file (easymacs-claude--backup-for-file target-file)))
+         (existed-before (and target-file
+                              (easymacs-claude--file-existed-before-p target-file))))
+    (if (and backup-file (file-exists-p backup-file))
+        (when (y-or-n-p (format "Revert %s to pre-Claude state? "
+                                (abbreviate-file-name target-file)))
+          (if (eq existed-before nil)
+              (when (file-exists-p target-file)
+                (delete-file target-file))
+            (copy-file backup-file target-file t))
+          (when-let ((buf (find-buffer-visiting target-file)))
+            (if (file-exists-p target-file)
+                (with-current-buffer buf
+                  (revert-buffer t t t))
+              (kill-buffer buf)))
+          (message "Reverted %s to pre-Claude state%s."
+                   (abbreviate-file-name target-file)
+                   (if (eq existed-before nil) " (file removed)" "")))
+      (user-error "No Claude backup available for this file"))))
 (defun easymacs-claude-toggle-display-mode ()
   "Toggle between buffer and inline display modes."
   (interactive)

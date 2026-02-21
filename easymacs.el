@@ -1,18 +1,16 @@
-;;; easymacs.el --- Opinionated Emacs config, refactored -*- lexical-binding: t -*-
+;;; easymacs.el --- A kickstart.nvim-style Emacs config -*- lexical-binding: t -*-
 
 ;;; Commentary:
-;; Opinionated Emacs config using use-package for package management,
-;; defcustom for user variables, and :custom/:hook keywords for clarity.
-
-;;; Features:
-;; Single file config as a program, objective <300 LOC
-;; - AI tab complete (no prompting*, just ghost text w/ minuet.el)
-;; - A decent term w/ eat, vterm or mistt
+;; One readable file with sensible defaults. No framework, no layers—just
+;; use-package declarations you can understand and extend.
+;; Requires Emacs 29.1+
 
 ;; macOS modifier keys (must be set before anything else)
 ;; (when (eq system-type 'darwin)
 ;;   (setq mac-command-modifier 'meta
 ;;         mac-option-modifier 'super))
+
+;; hello world
 
 (add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
 
@@ -245,6 +243,8 @@
 (define-key easymacs-claude-map (kbd "t") #'easymacs-claude-toggle-display-mode)
 (define-key easymacs-claude-map (kbd "p") #'easymacs-claude-interrupt)
 (define-key easymacs-claude-map (kbd "k") #'easymacs-claude-stop)
+(define-key easymacs-claude-map (kbd "s") #'easymacs-claude-review-select)
+(define-key easymacs-leader-map (kbd "C-g") #'easymacs-claude-toggle-inline-ghost-text)
 
 
 ;; setup god-mode global

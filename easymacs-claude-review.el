@@ -186,6 +186,7 @@
     (define-key map (kbd "C-c C-n") #'easymacs-claude-review-next)
     (define-key map (kbd "C-c C-p") #'easymacs-claude-review-prev)
     (define-key map (kbd "C-c C-k") #'easymacs-claude-review-clear)
+    (define-key map (kbd "C-c C-s") #'easymacs-claude-review-select)
     map)
   "Keymap for `easymacs-claude-review-mode'.")
 
@@ -193,6 +194,141 @@
   "Minor mode for reviewing Claude edits as a queue."
   :lighter nil
   :keymap easymacs-claude-review-mode-map)
+
+(defconst easymacs-claude-review-queue-buffer-name "*Claude Review Queue*"
+  "Buffer name used for the swiper-friendly Claude review queue list.")
+
+(defvar easymacs-claude-review-queue-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'easymacs-claude-review-queue-visit)
+    (define-key map (kbd "g") #'easymacs-claude-review-queue-refresh)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `easymacs-claude-review-queue-mode'.")
+
+(define-derived-mode easymacs-claude-review-queue-mode special-mode "ClaudeReviewQueue"
+  "Major mode for the aggregated Claude review queue buffer.")
+
+(defun easymacs-claude--review-item-preview (item)
+  "Return a concise preview string for review ITEM."
+  (let* ((after (string-trim (or (plist-get item :after) "")))
+         (before (string-trim (or (plist-get item :before) "")))
+         (raw (if (string-empty-p after) before after))
+         (line (car (split-string raw "\n" t))))
+    (if line
+        (truncate-string-to-width line 110 nil nil "...")
+      "<empty hunk>")))
+
+(defun easymacs-claude--review-collect-pending ()
+  "Return a list of pending review items across all live buffers."
+  (let (entries)
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (vectorp easymacs-claude--review-items)
+                   (> easymacs-claude--review-total 0))
+          (dotimes (idx (length easymacs-claude--review-items))
+            (when-let ((item (aref easymacs-claude--review-items idx)))
+              (when-let ((pos (marker-position (plist-get item :start))))
+                (push (list :buffer buf
+                            :index idx
+                            :line (line-number-at-pos pos t)
+                            :added (or (plist-get item :added-count) 0)
+                            :removed (or (plist-get item :removed-count) 0)
+                            :preview (easymacs-claude--review-item-preview item))
+                      entries)))))))
+    (nreverse entries)))
+
+(defun easymacs-claude--review-entry-path (entry)
+  "Return a display path string for review ENTRY."
+  (let ((src (plist-get entry :buffer))
+        (file (plist-get entry :file)))
+    (or (and src
+             (abbreviate-file-name
+              (or (buffer-file-name src) (buffer-name src))))
+        (and file (abbreviate-file-name file))
+        "<unknown>")))
+
+(defun easymacs-claude--review-entry-label (entry)
+  "Return minibuffer label text for review ENTRY."
+  (format "%s:%d  +%d -%d  %s"
+          (easymacs-claude--review-entry-path entry)
+          (or (plist-get entry :line) 1)
+          (or (plist-get entry :added) 0)
+          (or (plist-get entry :removed) 0)
+          (or (plist-get entry :preview) "<empty hunk>")))
+
+(defun easymacs-claude--review-visit-entry (entry)
+  "Visit a review ENTRY in its source buffer."
+  (let ((src (plist-get entry :buffer))
+        (idx (plist-get entry :index))
+        (file (plist-get entry :file))
+        (line (or (plist-get entry :line) 1)))
+    (cond
+     ((and src idx (buffer-live-p src))
+      (pop-to-buffer src)
+      (easymacs-claude--review-goto idx))
+     ((and file (file-exists-p file))
+      (pop-to-buffer (find-file-noselect file))
+      (goto-char (point-min))
+      (forward-line (max 0 (1- line)))
+      (recenter))
+     (t
+      (message "Source location for this review entry is unavailable.")))))
+
+(defun easymacs-claude--review-refresh-queue-buffer-if-open ()
+  "Refresh queue buffer when it is currently open."
+  (when-let ((buf (get-buffer easymacs-claude-review-queue-buffer-name)))
+    (with-current-buffer buf
+      (let ((line (line-number-at-pos)))
+        (easymacs-claude-review-queue-refresh)
+        (goto-char (point-min))
+        (forward-line (max 0 (1- line)))))))
+
+(defun easymacs-claude-review-queue-refresh ()
+  "Refresh the aggregated review queue buffer and return pending entries."
+  (interactive)
+  (let ((entries (easymacs-claude--review-collect-pending)))
+    (with-current-buffer (get-buffer-create easymacs-claude-review-queue-buffer-name)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (easymacs-claude-review-queue-mode)
+        (if entries
+            (dolist (entry entries)
+              (let ((line-start (point)))
+                (insert (concat (easymacs-claude--review-entry-label entry) "\n"))
+                (put-text-property line-start (point)
+                                   'easymacs-claude-review-entry entry)))
+          (insert "No pending Claude review items.\n"))
+        (goto-char (point-min))))
+    entries))
+
+(defun easymacs-claude-review-queue-visit ()
+  "Visit the review item at point in the aggregated review queue buffer."
+  (interactive)
+  (if-let ((entry (get-text-property (point) 'easymacs-claude-review-entry)))
+      (easymacs-claude--review-visit-entry entry)
+    (message "No review item on this line.")))
+
+(defun easymacs-claude-review-select ()
+  "Pick a pending Claude review item from the minibuffer and jump to it."
+  (interactive)
+  (let ((entries (easymacs-claude--review-collect-pending)))
+    (if entries
+        (let* ((choices (cl-loop for entry in entries
+                                 for n from 1
+                                 collect (cons (format "%d. %s"
+                                                       n
+                                                       (easymacs-claude--review-entry-label entry))
+                                               entry)))
+               (selection (completing-read "Review change: "
+                                           (mapcar #'car choices)
+                                           nil t))
+               (entry (cdr (assoc selection choices))))
+          (when entry
+            (easymacs-claude--review-visit-entry entry)))
+      (message "No pending Claude review items."))))
+
+(defalias 'easymacs-claude-review-swiper #'easymacs-claude-review-select)
 
 (defun easymacs-claude--diff-text (old-file new-file)
   "Return unified diff text between OLD-FILE and NEW-FILE."
@@ -317,7 +453,8 @@
         easymacs-claude--review-total 0
         easymacs-claude--review-index 0)
   (easymacs-claude-review-mode -1)
-  (easymacs-claude--review-refresh-mode-line))
+  (easymacs-claude--review-refresh-mode-line)
+  (easymacs-claude--review-refresh-queue-buffer-if-open))
 
 (defun easymacs-claude--review-current ()
   "Return the current review item or nil."
@@ -377,6 +514,7 @@
     (easymacs-claude--review-clear-item item)
     (aset easymacs-claude--review-items easymacs-claude--review-index nil)
     (easymacs-claude--review-refresh-mode-line)
+    (easymacs-claude--review-refresh-queue-buffer-if-open)
     (if (> (easymacs-claude--review-pending) 0)
         (easymacs-claude-review-next)
       (message "Claude review complete.")
@@ -401,48 +539,80 @@
         (insert before))
       (aset easymacs-claude--review-items easymacs-claude--review-index nil)
       (easymacs-claude--review-refresh-mode-line)
+      (easymacs-claude--review-refresh-queue-buffer-if-open)
       (if (> (easymacs-claude--review-pending) 0)
           (easymacs-claude-review-next)
         (message "Claude review complete.")
         (easymacs-claude-review-clear)))))
 
-(defun easymacs-claude-review-start ()
-  "Create a review queue for the current Claude edit session."
-  (when (and easymacs-claude-review-queue
-             (boundp 'easymacs-claude--temp-file)
-             (boundp 'easymacs-claude--source-file)
-             easymacs-claude--temp-file
-             easymacs-claude--source-file
-             (file-exists-p easymacs-claude--temp-file)
-             (file-exists-p easymacs-claude--source-file))
-    (when-let ((buf (find-buffer-visiting easymacs-claude--source-file)))
-      (with-current-buffer buf
-        (save-restriction
-          (widen)
-          (easymacs-claude-review-clear)
-          (let* ((diff-text (easymacs-claude--diff-text
-                             easymacs-claude--temp-file
-                             easymacs-claude--source-file))
-                 (hunks (and diff-text (easymacs-claude--parse-diff diff-text)))
-                 (items (mapcar #'easymacs-claude--review-make-item hunks)))
-            (setq easymacs-claude--review-items (vconcat items)
-                  easymacs-claude--review-total (length items)
-                  easymacs-claude--review-index 0)
-            (if (> easymacs-claude--review-total 0)
-                (progn
-                  (easymacs-claude-review-mode 1)
-                  (easymacs-claude--review-refresh-mode-line)
-                  (easymacs-claude--review-goto 0)
-                  (message "Claude review queue ready. C-c C-a accept, C-c C-r reject."))
-              (easymacs-claude-review-mode -1)
-              (easymacs-claude--review-refresh-mode-line)
-              (message "No Claude changes to review."))))))))
+(defun easymacs-claude--review-default-backups ()
+  "Return the latest known file-backup alist from Claude state."
+  (or (and (boundp 'easymacs-claude--last-run-backups)
+           easymacs-claude--last-run-backups)
+      (and (boundp 'easymacs-claude--source-file)
+           (boundp 'easymacs-claude--temp-file)
+           easymacs-claude--source-file
+           easymacs-claude--temp-file
+           (list (cons easymacs-claude--source-file easymacs-claude--temp-file)))))
 
-(defun easymacs-claude-review-after-run ()
-  "Run review queue and optionally show the diff buffer."
+(defun easymacs-claude--review-build-for-file (source-file temp-file focus)
+  "Build a review queue in SOURCE-FILE from TEMP-FILE.
+When FOCUS is non-nil, move point to the first pending hunk."
+  (let ((buf (find-file-noselect source-file))
+        (count 0))
+    (with-current-buffer buf
+      (save-restriction
+        (widen)
+        (easymacs-claude-review-clear)
+        (let* ((diff-text (easymacs-claude--diff-text temp-file source-file))
+               (hunks (and diff-text (easymacs-claude--parse-diff diff-text)))
+               (items (mapcar #'easymacs-claude--review-make-item hunks)))
+          (setq easymacs-claude--review-items (vconcat items)
+                easymacs-claude--review-total (length items)
+                easymacs-claude--review-index 0)
+          (setq count easymacs-claude--review-total)
+          (if (> count 0)
+              (progn
+                (easymacs-claude-review-mode 1)
+                (easymacs-claude--review-refresh-mode-line)
+                (when focus
+                  (unless (get-buffer-window buf t)
+                    (display-buffer buf '(display-buffer-reuse-window
+                                          display-buffer-pop-up-window)))
+                  (easymacs-claude--review-goto 0)))
+            (easymacs-claude-review-mode -1)
+            (easymacs-claude--review-refresh-mode-line)))))
+    count))
+
+(defun easymacs-claude-review-start (&optional file-backups)
+  "Create review queues for FILE-BACKUPS, an alist of (SOURCE . TEMP) files."
+  (when easymacs-claude-review-queue
+    (let* ((backups (or file-backups (easymacs-claude--review-default-backups)))
+           (changed-files nil))
+      (dolist (entry backups)
+        (pcase-let ((`(,source-file . ,temp-file) entry))
+          (when (and source-file
+                     temp-file
+                     (file-exists-p source-file)
+                     (file-exists-p temp-file))
+            (when (> (easymacs-claude--review-build-for-file
+                      source-file temp-file (null changed-files))
+                     0)
+              (push source-file changed-files)))))
+      (setq changed-files (nreverse changed-files))
+      (if changed-files
+          (message "Claude review queue ready in %d file(s): %s. C-c C-a accept, C-c C-r reject."
+                   (length changed-files)
+                   (mapconcat #'abbreviate-file-name changed-files ", "))
+        (message "No Claude changes to review."))
+      (easymacs-claude--review-refresh-queue-buffer-if-open)
+      changed-files)))
+
+(defun easymacs-claude-review-after-run (&optional file-backups)
+  "Run review queues and optionally show the diff buffer."
   (if easymacs-claude-review-queue
       (progn
-        (easymacs-claude-review-start)
+        (easymacs-claude-review-start file-backups)
         (when easymacs-claude-review-show-diff-buffer
           (when (fboundp 'easymacs-claude--show-diff)
             (easymacs-claude--show-diff))))
