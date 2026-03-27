@@ -232,19 +232,13 @@
 (define-key easymacs-python-map (kbd "l") #'python-shell-send-current-line)
 
 ;; Claude Code Integration
-(require 'easymacs-claude)
+(require 'cc)
 
-;; Keybindings under C-; c prefix
 (define-prefix-command 'easymacs-claude-map)
 (define-key easymacs-leader-map (kbd "C-c") 'easymacs-claude-map)
-(define-key easymacs-claude-map (kbd "c") #'easymacs-claude)
-(define-key easymacs-claude-map (kbd "n") #'easymacs-claude-newsession)
-(define-key easymacs-claude-map (kbd "r") #'easymacs-claude-revert)
-(define-key easymacs-claude-map (kbd "t") #'easymacs-claude-toggle-display-mode)
-(define-key easymacs-claude-map (kbd "p") #'easymacs-claude-interrupt)
-(define-key easymacs-claude-map (kbd "k") #'easymacs-claude-stop)
-(define-key easymacs-claude-map (kbd "s") #'easymacs-claude-review-select)
-(define-key easymacs-leader-map (kbd "C-g") #'easymacs-claude-toggle-inline-ghost-text)
+(define-key easymacs-claude-map (kbd "c") #'cc-query)
+(define-key easymacs-claude-map (kbd "n") #'cc-new-session)
+(define-key easymacs-claude-map (kbd "k") #'cc-stop)
 
 
 ;; setup god-mode global
