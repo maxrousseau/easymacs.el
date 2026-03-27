@@ -23,19 +23,19 @@
       (goto-char (point-max))
       (insert (if face (propertize text 'face face) text)))
     (when-let ((win (get-buffer-window buf t)))
-      (with-selected-window win (goto-char (point-max)) (recenter -1)))))
+      (set-window-point win (buffer-size buf)))))
 
 (defun cc--show ()
   (display-buffer (cc--buf)
                   '(display-buffer-in-side-window
-                    (side . bottom) (window-height . 0.3) (dedicated . t))))
+                    (side . bottom) (window-height . 0.2) (dedicated . t))))
 
 ;;; Tmp file management
 (defun cc--make-copies (source)
-  (let* ((dir (temporary-file-directory))
+  (let* ((dir (file-name-directory source))
          (name (file-name-nondirectory source))
-         (snapshot (expand-file-name (concat name ".snapshot") dir))
-         (tmp (expand-file-name (concat name ".cctmp") dir)))
+         (snapshot (expand-file-name (concat ".cc-snapshot-" name) dir))
+         (tmp (expand-file-name (concat ".cc-tmp-" name) dir)))
     (copy-file source snapshot t)
     (copy-file source tmp t)
     (cons snapshot tmp)))
@@ -99,27 +99,37 @@
 
 ;;; Diff display & sentinel
 (defun cc--show-diff ()
-  (with-current-buffer (cc--buf)
-    (when (and cc--snapshot cc--tmp (file-exists-p cc--snapshot) (file-exists-p cc--tmp))
+  (let (snapshot tmp)
+    (with-current-buffer (cc--buf)
+      (setq snapshot cc--snapshot tmp cc--tmp))
+    (when (and snapshot tmp (file-exists-p snapshot) (file-exists-p tmp))
       (let ((diff (with-temp-buffer
-                    (call-process "diff" nil t nil "-u" cc--snapshot cc--tmp)
+                    (call-process "diff" nil t nil "-u" snapshot tmp)
                     (buffer-string))))
         (if (string-empty-p diff)
             (cc--append "\n(no changes)\n" 'font-lock-comment-face)
-          (cc--append "\n── proposed changes ──\n" 'font-lock-doc-face)
-          (cc--append diff)
-          (cc--append "\n[C-c C-c] accept  [C-c C-k] reject\n" 'font-lock-doc-face)
-          (cc-diff-mode 1))))))
+          (let ((buf (get-buffer-create "*cc-diff*")))
+            (with-current-buffer buf
+              (let ((inhibit-read-only t)) (erase-buffer) (insert diff))
+              (diff-mode)
+              (cc-diff-mode 1)
+              (goto-char (point-min)))
+            (display-buffer buf '(display-buffer-in-side-window
+                                  (side . bottom) (window-height . 0.3)))
+            (cc--append "\n[C-c C-c] accept  [C-c C-k] reject\n"
+                        'font-lock-doc-face)))))))
 
 (defun cc--sentinel (_proc event)
   (when (string-match-p "finished\\|exited\\|killed" event)
     (with-current-buffer (cc--buf)
       (when (> (length cc--line-buf) 0)
         (cc--parse-json-line cc--line-buf)
-        (setq cc--line-buf "")))
-    (setq cc--busy nil cc--session t)
-    (with-current-buffer (cc--buf) (setq header-line-format "done"))
-    (cc--show-diff)))
+        (setq cc--line-buf ""))
+      (setq cc--busy nil cc--session t
+            header-line-format "done"))
+    (condition-case err
+        (cc--show-diff)
+      (error (message "cc: diff error: %S" err)))))
 
 ;;; Accept / Reject / Stop
 (defvar cc-diff-mode-map
@@ -186,7 +196,7 @@
       (setq cc--source source cc--snapshot (car copies)
             cc--tmp (cdr copies) cc--line-buf ""
             header-line-format "working..."))
-    (cc--append (format "> %s\n\n" prompt) 'font-lock-keyword-face)
+    (cc--append (format "> %s\n" prompt) 'font-lock-keyword-face)
     (cc--show)
     (setq cc--busy t)
     (let ((proc (start-process-shell-command "cc" nil cmd)))
