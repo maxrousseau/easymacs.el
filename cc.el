@@ -14,7 +14,8 @@
     (with-current-buffer buf
       (unless (derived-mode-p 'special-mode)
         (special-mode)
-        (setq-local buffer-read-only nil)))
+        (setq-local buffer-read-only nil)
+        (local-set-key (kbd "q") #'cc-dismiss)))
     buf))
 
 (defun cc--append (text &optional face)
@@ -47,13 +48,19 @@
     (setq cc--snapshot nil cc--tmp nil)))
 
 ;;; Command builder
-(defun cc--build-cmd (prompt source tmp)
-  (let* ((src-buf (find-buffer-visiting source))
-         (mode (if src-buf (with-current-buffer src-buf (symbol-name major-mode)) "fundamental"))
-         (line (if src-buf (with-current-buffer src-buf (line-number-at-pos)) 1))
-         (full-prompt (format "File: %s (mode: %s, line: %d). Edit ONLY the copy at %s. Query: %s"
-                              source mode line tmp prompt))
-         (tools (format "Edit(%s) Write(%s) Read Glob Grep WebSearch WebFetch" tmp tmp)))
+(defun cc--build-cmd (prompt &optional source tmp)
+  (let* ((full-prompt
+          (if source
+              (let* ((src-buf (find-buffer-visiting source))
+                     (mode (if src-buf (with-current-buffer src-buf (symbol-name major-mode)) "fundamental"))
+                     (line (if src-buf (with-current-buffer src-buf (line-number-at-pos)) 1)))
+                (format "File: %s (mode: %s, line: %d). Edit ONLY the copy at %s. Query: %s"
+                        source mode line tmp prompt))
+            (format "Buffer: %s (mode: %s). No file edits available. Query: %s"
+                    (buffer-name) (symbol-name major-mode) prompt)))
+         (tools (if source
+                    (format "Edit(%s) Write(%s) Read Glob Grep WebSearch WebFetch" tmp tmp)
+                  "Read Glob Grep WebSearch WebFetch")))
     (format "claude -p %s --allowedTools %s --permission-mode acceptEdits --output-format stream-json --verbose%s"
             (shell-quote-argument full-prompt)
             (shell-quote-argument tools)
@@ -113,10 +120,14 @@
               (let ((inhibit-read-only t)) (erase-buffer) (insert diff))
               (diff-mode)
               (cc-diff-mode 1)
+              (local-set-key (kbd "q") #'cc-dismiss)
+              (local-set-key (kbd "C-c C-c") #'cc-accept)
+              (local-set-key (kbd "C-c C-k") #'cc-reject)
               (goto-char (point-min)))
-            (display-buffer buf '(display-buffer-in-side-window
-                                  (side . bottom) (window-height . 0.3)))
-            (cc--append "\n[C-c C-c] accept  [C-c C-k] reject\n"
+            (when-let ((win (display-buffer buf '(display-buffer-in-side-window
+                                                  (side . bottom) (window-height . 0.3)))))
+              (select-window win))
+            (cc--append "\n[C-c C-c] accept  [C-c C-k] reject  [q] dismiss\n"
                         'font-lock-doc-face)))))))
 
 (defun cc--sentinel (_proc event)
@@ -132,10 +143,18 @@
       (error (message "cc: diff error: %S" err)))))
 
 ;;; Accept / Reject / Stop
+(defun cc-dismiss ()
+  "Close *cc* and *cc-diff* windows."
+  (interactive)
+  (dolist (name '("*cc*" "*cc-diff*"))
+    (when-let ((win (get-buffer-window name t)))
+      (delete-window win))))
+
 (defvar cc-diff-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'cc-accept)
     (define-key map (kbd "C-c C-k") #'cc-reject)
+    (define-key map (kbd "q") #'cc-dismiss)
     map))
 
 (define-minor-mode cc-diff-mode
@@ -183,18 +202,22 @@
 
 ;;; Entry points
 (defun cc-query (prompt)
-  "Send PROMPT to Claude Code for the current file."
+  "Send PROMPT to Claude Code. If in a file buffer, Claude can edit a tmp copy.
+Otherwise, buffer content is included as context (read-only)."
   (interactive "sClaude: ")
-  (unless buffer-file-name (user-error "Buffer must be visiting a file"))
   (when cc--busy (user-error "Claude is busy — cc-stop to cancel"))
-  (save-buffer)
-  (let* ((source (expand-file-name buffer-file-name))
-         (copies (cc--make-copies source))
-         (cmd (cc--build-cmd prompt source (cdr copies))))
+  (let* ((has-file buffer-file-name)
+         (source (when has-file (save-buffer) (expand-file-name buffer-file-name)))
+         (copies (when source (cc--make-copies source)))
+         (context (unless source
+                    (buffer-substring-no-properties
+                     (point-min) (min (point-max) (* 64 1024)))))
+         (full-prompt (if context (concat prompt "\n\n```\n" context "```") prompt))
+         (cmd (cc--build-cmd full-prompt source (cdr copies))))
     (with-current-buffer (cc--buf)
       (let ((inhibit-read-only t)) (erase-buffer))
-      (setq cc--source source cc--snapshot (car copies)
-            cc--tmp (cdr copies) cc--line-buf ""
+      (setq cc--source source cc--snapshot (and copies (car copies))
+            cc--tmp (and copies (cdr copies)) cc--line-buf ""
             header-line-format "working..."))
     (cc--append (format "> %s\n" prompt) 'font-lock-keyword-face)
     (cc--show)
