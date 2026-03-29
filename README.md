@@ -38,4 +38,6 @@ Requires Emacs 29.1+
 | `C-; C-c c` | Claude prompt |
 | `C-; C-c n` | New Claude session |
 | `C-; C-c r` | Revert Claude edits |
+| `C-; C-c s` | Pick Claude review change (minibuffer) |
+| `C-; C-g` | Toggle Claude inline ghost text |
 | `<escape>` | god-mode toggle |

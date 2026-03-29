@@ -1,18 +1,16 @@
-;;; easymacs.el --- Opinionated Emacs config, refactored -*- lexical-binding: t -*-
+;;; easymacs.el --- A kickstart.nvim-style Emacs config -*- lexical-binding: t -*-
 
 ;;; Commentary:
-;; Opinionated Emacs config using use-package for package management,
-;; defcustom for user variables, and :custom/:hook keywords for clarity.
-
-;;; Features:
-;; Single file config as a program, objective <300 LOC
-;; - AI tab complete (no prompting*, just ghost text w/ minuet.el)
-;; - A decent term w/ eat, vterm or mistt
+;; One readable file with sensible defaults. No framework, no layers—just
+;; use-package declarations you can understand and extend.
+;; Requires Emacs 29.1+
 
 ;; macOS modifier keys (must be set before anything else)
 ;; (when (eq system-type 'darwin)
 ;;   (setq mac-command-modifier 'meta
 ;;         mac-option-modifier 'super))
+
+;; hello world
 
 (add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
 
@@ -234,17 +232,13 @@
 (define-key easymacs-python-map (kbd "l") #'python-shell-send-current-line)
 
 ;; Claude Code Integration
-(require 'easymacs-claude)
+(require 'cc)
 
-;; Keybindings under C-; c prefix
 (define-prefix-command 'easymacs-claude-map)
 (define-key easymacs-leader-map (kbd "C-c") 'easymacs-claude-map)
-(define-key easymacs-claude-map (kbd "c") #'easymacs-claude)
-(define-key easymacs-claude-map (kbd "n") #'easymacs-claude-newsession)
-(define-key easymacs-claude-map (kbd "r") #'easymacs-claude-revert)
-(define-key easymacs-claude-map (kbd "t") #'easymacs-claude-toggle-display-mode)
-(define-key easymacs-claude-map (kbd "p") #'easymacs-claude-interrupt)
-(define-key easymacs-claude-map (kbd "k") #'easymacs-claude-stop)
+(define-key easymacs-claude-map (kbd "c") #'cc-query)
+(define-key easymacs-claude-map (kbd "n") #'cc-new-session)
+(define-key easymacs-claude-map (kbd "k") #'cc-stop)
 
 
 ;; setup god-mode global
