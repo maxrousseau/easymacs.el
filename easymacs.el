@@ -1,5 +1,4 @@
 ;;; easymacs.el --- A kickstart.nvim-style Emacs config -*- lexical-binding: t -*-
-
 ;;; Commentary:
 ;; One readable file with sensible defaults. No framework, no layers—just
 ;; use-package declarations you can understand and extend.
@@ -9,18 +8,12 @@
 ;; (when (eq system-type 'darwin)
 ;;   (setq mac-command-modifier 'meta
 ;;         mac-option-modifier 'super))
-
-;; hello world
-
 (add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
 
 (require 'package)
 ;; Basic package repositories and use-package bootstrap
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 (package-initialize)
-(unless (package-installed-p 'use-package)
-  (package-refresh-contents)
-  (package-install 'use-package))
 (eval-and-compile
   (require 'use-package)
   (setq use-package-always-ensure t
@@ -126,14 +119,12 @@
 (use-package aggressive-indent
   :hook (emacs-lisp-mode . aggressive-indent-mode))
 
-;; Dired
 (use-package dired
   :ensure nil
   :custom
   (dired-listing-switches "-l")
   :hook (dired-mode . dired-hide-details-mode))
 
-;; Themes & Eye Candy
 (use-package mood-line
   :custom
   (mood-line-glyph-alist mood-line-glyphs-fira-code)
@@ -148,16 +139,9 @@
   :config
   (load-theme 'modus-vivendi :no-confirm))
 
-;; (use-package catppuccin-theme
-;;   :config
-;;   (setq catppuccin-flavor 'mocha)
-;;   (load-theme 'catppuccin :no-confirm)
-;;   (catppuccin-reload))
-
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
 
-;; Snippets
 (use-package yasnippet
   :custom
   (yas-snippet-dirs (list easymacs-snippets-dir))
@@ -169,29 +153,9 @@
 (use-package yasnippet-snippets
   :after yasnippet)
 
-;; Git
 (use-package magit
   :bind (("C-x g" . magit-status)
          ("C-x C-g" . magit-status)))
-
-;; AI Inline Completion
-(use-package minuet
-  :bind
-  (("M-i" . minuet-show-suggestion)
-   ("C-c m" . minuet-configure-provider)
-   :map minuet-active-mode-map
-   ("M-p" . minuet-previous-suggestion)
-   ("M-n" . minuet-next-suggestion)
-   ("M-a" . minuet-accept-suggestion))
-  :config
-  (setq minuet-provider 'openai-compatible)
-  (setq minuet-request-timeout 2.5)
-  (plist-put minuet-openai-compatible-options :end-point "https://openrouter.ai/api/v1/chat/completions")
-  (plist-put minuet-openai-compatible-options :api-key "OPENROUTER_API_KEY")
-  (plist-put minuet-openai-compatible-options :model "anthropic/claude-sonnet-4.5")
-  (minuet-set-optional-options minuet-openai-compatible-options :provider '(:sort "latency"))
-  (minuet-set-optional-options minuet-openai-compatible-options :max_tokens 1000)
-  (minuet-set-optional-options minuet-openai-compatible-options :top_p 0.9))
 
 ;; Navigation & Commands (C-; prefix)
 (use-package avy)
@@ -233,7 +197,6 @@
 
 ;; Claude Code Integration
 (require 'cc)
-
 (define-prefix-command 'easymacs-claude-map)
 (define-key easymacs-leader-map (kbd "C-c") 'easymacs-claude-map)
 (define-key easymacs-claude-map (kbd "c") #'cc-query)
@@ -252,16 +215,11 @@
 	(setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
   (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
 
-(use-package which-key
-  :diminish which-key-mode
-  :custom
-  (which-key-idle-delay 0.5)
-  (which-key-popup-type 'side-window)
-  (which-key-side-window-location 'bottom)
-  (which-key-max-description-length 27)
-  (which-key-max-display-columns 4)
-  :config
-  (which-key-mode))
+(which-key-mode) ;; builtin emacs 30+
+(setq which-key-idle-delay 0.5
+      which-key-side-window-location 'bottom
+      which-key-max-description-length 27
+      which-key-max-display-columns 4)
 
 ;; Treesitter & LSP for Python
 (use-package treesit-auto
@@ -275,6 +233,7 @@
   :defer t)
 
 (use-package eglot
+  :ensure nil ;; builtin
   :hook ((python-mode . eglot-ensure)
          (python-ts-mode . eglot-ensure))
   :config
@@ -309,8 +268,7 @@
           (lambda ()
             (setq-local indent-tabs-mode nil
                         tab-width 2
-                        python-indent-offset 2
-                        py-indent-tabs-mode t)
+                        python-indent-offset 2)
             (add-hook 'before-save-hook #'delete-trailing-whitespace nil t)))
 
 (provide 'easymacs)
