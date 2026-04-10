@@ -16,7 +16,15 @@ Use #+BEGIN_SRC lang with appropriate header args:
 Always specify the language. The buffer has default :results output replace.
 Python blocks share a :session py — variables persist across blocks.
 
-** File changes — use :tangle
+** File changes — use :tangle for write and diff for edits
+
+IMPORTANT: :tangle REPLACES the entire file, you can use it to suggest writing to new files. The block MUST contain the
+COMPLETE file contents, not just a snippet.
+
+For small edits to existing files, use #+BEGIN_SRC diff instead so the user can review and apply hunks.
+
+Only write new files if explicitly asked to.
+
 When asked to change or create a file, ALWAYS use :tangle with the ABSOLUTE path:
   #+BEGIN_SRC python :tangle /absolute/path/to/file.py :mkdirp yes :comments link
   ...

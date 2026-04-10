@@ -8,7 +8,11 @@
 
 (defun cc--buf ()
   (let ((buf (get-buffer-create "*cc*")))
-    (with-current-buffer buf (unless (derived-mode-p 'org-mode) (org-mode)))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'org-mode) (org-mode))
+      (unless buffer-file-name
+        (set-visited-file-name "/tmp/cc-session.org" t)
+        (set-buffer-modified-p nil)))
     buf))
 
 (defun cc--append (text)

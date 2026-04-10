@@ -20,10 +20,9 @@
         use-package-expand-minimally t))
 (setq frame-resize-pixelwise t)
 
-(use-package exec-path-from-shell
-  :config
-  (when (memq window-system '(mac ns x))
-    (exec-path-from-shell-initialize)))
+;; `exec-path-from-shell' was here, but it spawns a subshell on every start
+;; (hundreds of ms).  We set PATH explicitly below, which is all we actually
+;; need on this machine.
 
 ;; Custom group and variables
 (defgroup easymacs nil
@@ -35,7 +34,7 @@
   :type 'string
   :group 'easymacs)
 
-(defcustom easymacs-font-size "16"
+(defcustom easymacs-font-size "14"
   "Font size for Easymacs."
   :type 'string
   :group 'easymacs)
@@ -73,20 +72,25 @@
 ;; Suppress startup screen
 (setq inhibit-startup-screen t)
 
-;; Completion & Search
-(global-auto-revert-mode 1)
-
+;; Completion & Search — ivy is eager because we wire it into leader keys
+;; below, but its setup is cheap.
 (use-package ivy
-  :demand t
   :custom
   (ivy-use-virtual-buffers t)
   (ivy-count-format "(%d/%d) ")
   :config
   (ivy-mode 1))
 
-(use-package swiper
-  :after ivy)
+(use-package counsel
+  :after ivy
+  :defer t)
 
+(use-package swiper
+  :after ivy
+  :defer t)
+
+;; Auto-revert: defer until the first buffer hooks us in.
+(add-hook 'emacs-startup-hook #'global-auto-revert-mode)
 
 ;; Terminal
 (use-package eat
@@ -104,13 +108,22 @@
               indent-tabs-mode t
               fill-column 120)
 
-(display-time-mode 1)
+;; These are cheap and wanted everywhere.
 (blink-cursor-mode -1)
 (global-hl-line-mode 1)
-(menu-bar-mode -1)
-(tool-bar-mode -1)
-(scroll-bar-mode -1)
-(set-frame-font (concat easymacs-font-face " " easymacs-font-size) nil t)
+
+;; Font is a GUI-only concern; setting it in a TTY frame is a no-op that
+;; still costs work.  Run it after init on the first graphical frame.
+(defun easymacs--set-font (&optional frame)
+  (when (display-graphic-p frame)
+    (set-frame-font (concat easymacs-font-face " " easymacs-font-size) nil t)
+    (remove-hook 'after-make-frame-functions #'easymacs--set-font)))
+(if (daemonp)
+    (add-hook 'after-make-frame-functions #'easymacs--set-font)
+  (add-hook 'emacs-startup-hook #'easymacs--set-font))
+
+;; Time in modeline — defer a tick so it doesn't run during init.
+(add-hook 'emacs-startup-hook #'display-time-mode)
 
 (add-hook 'prog-mode-hook #'display-line-numbers-mode)
 (add-hook 'text-mode-hook #'turn-on-auto-fill)
@@ -126,29 +139,29 @@
   :hook (dired-mode . dired-hide-details-mode))
 
 (use-package mood-line
+  :hook (emacs-startup . mood-line-mode)
   :custom
-  (mood-line-glyph-alist mood-line-glyphs-fira-code)
-  :config
-  (mood-line-mode))
+  (mood-line-glyph-alist mood-line-glyphs-fira-code))
 
 (use-package breadcrumb
-  :config
-  (breadcrumb-mode))
+  :hook (emacs-startup . breadcrumb-mode))
 
-(use-package modus-themes
+(use-package catppuccin-theme
   :config
-  (load-theme 'modus-vivendi :no-confirm))
+  (setq catppuccin-flavor 'mocha)
+  (load-theme 'catppuccin :no-confirm))
 
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
 
+;; yasnippet was eager with `yas-global-mode', which reload-all's hundreds
+;; of snippet files at startup.  Defer until a real editing buffer opens.
 (use-package yasnippet
-  :custom
-  (yas-snippet-dirs (list easymacs-snippets-dir))
-  :hook (prog-mode . yas-minor-mode)
+  :defer t
+  :hook ((prog-mode text-mode) . yas-minor-mode)
   :config
-  (yas-reload-all)
-  (yas-global-mode 1))
+  (add-to-list 'yas-snippet-dirs easymacs-snippets-dir)
+  (yas-reload-all))
 
 (use-package yasnippet-snippets
   :after yasnippet)
@@ -158,7 +171,9 @@
          ("C-x C-g" . magit-status)))
 
 ;; Navigation & Commands (C-; prefix)
-(use-package avy)
+(use-package avy
+  :defer t
+  :commands (avy-goto-char-2 avy-goto-line))
 
 (use-package ace-window
   :bind ("M-o" . ace-window)
@@ -182,7 +197,7 @@
 (define-key easymacs-leader-map (kbd "g") #'counsel-rg)
 (define-key easymacs-leader-map (kbd "a") #'swiper-all)
 (define-key easymacs-leader-map (kbd "x") #'company-yasnippet)
-(define-key easymacs-leader-map (kbd "t") #'modus-themes-toggle)
+(define-key easymacs-leader-map (kbd "t") #'load-theme)
 
 ;; Python keybindings (C-; p prefix)
 (define-prefix-command 'easymacs-python-map)
@@ -195,8 +210,17 @@
 (define-key easymacs-python-map (kbd "b") #'python-shell-send-buffer)
 (define-key easymacs-python-map (kbd "l") #'python-shell-send-current-line)
 
-;; Claude Code Integration
-(require 'cc)
+(add-hook 'emacs-startup-hook #'tab-bar-mode) ;; tabs
+(define-key easymacs-leader-map (kbd "TAB") #'tab-switch)       ;; ivy-powered tab switch
+(define-key easymacs-leader-map (kbd "T")   #'tab-new)
+(define-key easymacs-leader-map (kbd "w")   #'tab-close)
+
+;; Claude Code Integration — autoload rather than require so cc.el and its
+;; (cheap but non-zero) deps aren't touched until you invoke a command.
+(autoload 'cc-query "cc" nil t)
+(autoload 'cc-new-session "cc" nil t)
+(autoload 'cc-stop "cc" nil t)
+(autoload 'cc-dismiss "cc" nil t)
 (define-prefix-command 'easymacs-claude-map)
 (define-key easymacs-leader-map (kbd "C-c") 'easymacs-claude-map)
 (define-key easymacs-claude-map (kbd "c") #'cc-query)
@@ -204,30 +228,42 @@
 (define-key easymacs-claude-map (kbd "k") #'cc-stop)
 
 
-;; setup god-mode global
+;; setup god-mode — autoload on first toggle instead of eagerly loading.
 (use-package god-mode
+  :defer t
+  :commands (god-mode-all god-local-mode)
+  :init
+  ;; GUI: <escape> is a real key, bind it directly.
+  ;; TTY: <escape> is the Meta prefix (\e + key == M-key), so binding it
+  ;; would break every Meta keystroke.  Use C-\ in terminal instead.
+  (if (display-graphic-p)
+      (global-set-key (kbd "<escape>") #'god-mode-all)
+    (global-set-key (kbd "C-\\") #'god-mode-all))
   :config
-  (global-set-key (kbd "<escape>") #'god-mode-all)
-  (setq god-exempt-major-modes nil)
-  (setq god-exempt-predicates
+  (setq god-exempt-major-modes nil
+        god-exempt-predicates
         (list (lambda () (derived-mode-p 'magit-mode 'dired-mode))))
   (defun my-god-mode-update-cursor-type ()
-	(setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
+    (setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
   (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
 
-(which-key-mode) ;; builtin emacs 30+
+;; which-key is builtin on Emacs 30+, but enabling it eagerly costs a
+;; little; defer to after startup.
 (setq which-key-idle-delay 0.5
       which-key-side-window-location 'bottom
       which-key-max-description-length 27
       which-key-max-display-columns 4)
+(add-hook 'emacs-startup-hook #'which-key-mode)
 
-;; Treesitter & LSP for Python
+;; Treesitter — defer until a real file opens.  `global-treesit-auto-mode'
+;; only needs to be on before the first visit, so emacs-startup-hook is fine.
 (use-package treesit-auto
+  :defer t
+  :hook (emacs-startup . global-treesit-auto-mode)
   :custom
   (treesit-auto-install 'prompt)
   :config
-  (treesit-auto-add-to-auto-mode-alist 'all)
-  (global-treesit-auto-mode))
+  (treesit-auto-add-to-auto-mode-alist 'all))
 
 (use-package pyvenv
   :defer t)
@@ -245,14 +281,15 @@
          (python-ts-mode . ruff-format-on-save-mode)))
 
 (use-package company
+  :defer t
+  :hook ((prog-mode . company-mode)
+         (text-mode . company-mode))
   :custom
   (company-idle-delay 0.2)
   (company-minimum-prefix-length 1)
   (company-tooltip-limit 20)
   (company-show-numbers t)
-  (company-tooltip-align-annotations t)
-  :config
-  (global-company-mode))
+  (company-tooltip-align-annotations t))
 
 ;; Eldoc
 (use-package eldoc-box
