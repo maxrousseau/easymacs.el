@@ -44,7 +44,6 @@
   :type 'directory
   :group 'easymacs)
 
-
 ;; Adjust PATH for Homebrew binaries, optional based on your config
 (setenv "PATH" (concat (getenv "PATH") ":/opt/homebrew/bin"))
 (add-to-list 'exec-path "/opt/homebrew/bin")
@@ -125,6 +124,32 @@
 ;; Time in modeline — defer a tick so it doesn't run during init.
 (add-hook 'emacs-startup-hook #'display-time-mode)
 
+;; Mouse support in TTY frames.  Without `xterm-mouse-mode', tmux (which
+;; has `mouse on') swallows scroll-wheel events and enters its own
+;; copy-mode instead of passing them through to Emacs.  Enabling this
+;; makes Emacs declare mouse tracking, and tmux forwards events.
+;; tty-setup-hook fires on each new TTY frame (also handles daemon case).
+(add-hook 'tty-setup-hook #'xterm-mouse-mode)
+(unless (display-graphic-p) (xterm-mouse-mode 1))
+
+;; TTY clipboard sync via OSC 52.  In GUI frames Emacs hands kills to the
+;; system pasteboard automatically; in a terminal it has no direct
+;; channel, so we encode the killed text as an OSC 52 escape sequence and
+;; send it to the terminal.  Ghostty interprets it; tmux passes it
+;; through because `set-clipboard on' is set in ~/.config/tmux/tmux.conf.
+(defun easymacs--osc52-copy (text)
+  "Write TEXT to the terminal's clipboard via OSC 52."
+  (send-string-to-terminal
+   (concat "\e]52;c;"
+           (base64-encode-string (encode-coding-string text 'utf-8) t)
+           "\e\\")))
+
+(defun easymacs--enable-tty-clipboard (&optional _frame)
+  (unless (display-graphic-p)
+    (setq interprogram-cut-function #'easymacs--osc52-copy)))
+(add-hook 'tty-setup-hook #'easymacs--enable-tty-clipboard)
+(easymacs--enable-tty-clipboard)
+
 (add-hook 'prog-mode-hook #'display-line-numbers-mode)
 (add-hook 'text-mode-hook #'turn-on-auto-fill)
 (add-hook 'prog-mode-hook #'turn-on-auto-fill)
@@ -150,6 +175,30 @@
   :config
   (setq catppuccin-flavor 'mocha)
   (load-theme 'catppuccin :no-confirm))
+
+;; Manual toggle between catppuccin mocha (dark) and latte (light).
+;; Bound to C-; t below.
+(defun easymacs-toggle-theme ()
+  "Toggle between catppuccin mocha and latte."
+  (interactive)
+  (let ((next (if (eq catppuccin-flavor 'mocha) 'latte 'mocha)))
+    (mapc #'disable-theme custom-enabled-themes)
+    (setq catppuccin-flavor next)
+    (load-theme 'catppuccin :no-confirm)
+    (message "theme: catppuccin %s" next)))
+
+;; In a TTY frame, themes paint the `default' face with an explicit
+;; background, which Ghostty renders opaquely — killing the terminal's
+;; `background-opacity' window transparency.  Clearing the default bg to
+;; `unspecified-bg' tells Emacs to leave cells unpainted so the terminal
+;; shows through.  Runs after every theme load (including our toggle).
+(defun easymacs--tty-transparent-bg (&rest _)
+  (unless (display-graphic-p)
+    (set-face-background 'default "unspecified-bg")
+    ;; Line-number column paints bg too; match it so it also inherits.
+    (set-face-background 'line-number "unspecified-bg")))
+(advice-add 'load-theme :after #'easymacs--tty-transparent-bg)
+(easymacs--tty-transparent-bg)
 
 (use-package rainbow-delimiters
   :hook (prog-mode . rainbow-delimiters-mode))
@@ -185,6 +234,11 @@
 (global-set-key (kbd "C-;") 'easymacs-leader-map)
 (global-set-key (kbd "C-x C-b") 'switch-to-buffer)
 
+;; Unbind `suspend-frame' so a stray C-z (muscle memory from tmux's new
+;; prefix) doesn't accidentally background Emacs when running outside tmux.
+(global-unset-key (kbd "C-z"))
+(global-unset-key (kbd "C-x C-z"))
+
 (define-key easymacs-leader-map (kbd "f") #'counsel-find-file)
 (define-key easymacs-leader-map (kbd "b") #'switch-to-buffer)
 (define-key easymacs-leader-map (kbd "h") #'eldoc-box-help-at-point)
@@ -197,7 +251,8 @@
 (define-key easymacs-leader-map (kbd "g") #'counsel-rg)
 (define-key easymacs-leader-map (kbd "a") #'swiper-all)
 (define-key easymacs-leader-map (kbd "x") #'company-yasnippet)
-(define-key easymacs-leader-map (kbd "t") #'load-theme)
+(define-key easymacs-leader-map (kbd "t") #'easymacs-toggle-theme)
+(define-key easymacs-leader-map (kbd "u") #'revert-buffer-quick)
 
 ;; Python keybindings (C-; p prefix)
 (define-prefix-command 'easymacs-python-map)
@@ -243,8 +298,16 @@
   (setq god-exempt-major-modes nil
         god-exempt-predicates
         (list (lambda () (derived-mode-p 'magit-mode 'dired-mode))))
+  ;; GUI: set `cursor-type'.  TTY: emit DECSCUSR escapes directly.
+  ;; god-mode → `\e[2 q' (steady block).
+  ;; insert   → `\e[6 q' (steady bar/line).
+  ;; Chosen after ruling out: blinking block (distracting) and
+  ;; underline-in-insert (too similar to block for quick recognition).
   (defun my-god-mode-update-cursor-type ()
-    (setq cursor-type (if (or god-local-mode buffer-read-only) 'box 'hbar)))
+    (let ((box-p (or god-local-mode buffer-read-only)))
+      (if (display-graphic-p)
+          (setq cursor-type (if box-p 'box 'bar))
+        (send-string-to-terminal (if box-p "\e[2 q" "\e[6 q")))))
   (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
 
 ;; which-key is builtin on Emacs 30+, but enabling it eagerly costs a
