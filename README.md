@@ -13,9 +13,6 @@ A single-file Emacs config (à la kickstart.nvim) with sensible defaults for Pyt
 ## Features
 
 - Python IDE: LSP (eglot), completion, snippets, REPL
-- AI tab completion via minuet.el
-- Claude Code integration with streaming output and diff review
-- god-mode for modal editing
 - avy/ace-window for quick navigation
 
 ## Installation
@@ -35,9 +32,3 @@ Requires Emacs 29.1+
 | `C-; j` | avy-goto-char-2 |
 | `C-; l` | avy-goto-line |
 | `M-o` | ace-window |
-| `C-; C-c c` | Claude prompt |
-| `C-; C-c n` | New Claude session |
-| `C-; C-c r` | Revert Claude edits |
-| `C-; C-c s` | Pick Claude review change (minibuffer) |
-| `C-; C-g` | Toggle Claude inline ghost text |
-| `<escape>` | god-mode toggle |

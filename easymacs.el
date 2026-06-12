@@ -2,13 +2,17 @@
 ;;; Commentary:
 ;; One readable file with sensible defaults. No framework, no layers—just
 ;; use-package declarations you can understand and extend.
-;; Requires Emacs 29.1+
+;; Requires Emacs 30+
 
 ;; macOS modifier keys (must be set before anything else)
 ;; (when (eq system-type 'darwin)
 ;;   (setq mac-command-modifier 'meta
 ;;         mac-option-modifier 'super))
 (add-to-list 'load-path (file-name-directory (or load-file-name buffer-file-name)))
+
+;; Load the newer of .el/.elc so edits to this config take effect without
+;; a manual byte-recompile.
+(setq load-prefer-newer t)
 
 (require 'package)
 ;; Basic package repositories and use-package bootstrap
@@ -20,16 +24,12 @@
         use-package-expand-minimally t))
 (setq frame-resize-pixelwise t)
 
-;; `exec-path-from-shell' was here, but it spawns a subshell on every start
-;; (hundreds of ms).  We set PATH explicitly below, which is all we actually
-;; need on this machine.
-
 ;; Custom group and variables
 (defgroup easymacs nil
   "Opinionated Emacs config for Maxime Rousseau."
   :group 'convenience)
 
-(defcustom easymacs-font-face "FiraCode Nerd Font"
+(defcustom easymacs-font-face "Hack"
   "Font family for Easymacs."
   :type 'string
   :group 'easymacs)
@@ -110,6 +110,8 @@
 ;; These are cheap and wanted everywhere.
 (blink-cursor-mode -1)
 (global-hl-line-mode 1)
+
+(setq-default cursor-type 'box)
 
 ;; Font is a GUI-only concern; setting it in a TTY frame is a no-op that
 ;; still costs work.  Run it after init on the first graphical frame.
@@ -219,6 +221,9 @@
   :bind (("C-x g" . magit-status)
          ("C-x C-g" . magit-status)))
 
+(use-package forge
+  :after magit)
+
 ;; Navigation & Commands (C-; prefix)
 (use-package avy
   :defer t
@@ -265,50 +270,11 @@
 (define-key easymacs-python-map (kbd "b") #'python-shell-send-buffer)
 (define-key easymacs-python-map (kbd "l") #'python-shell-send-current-line)
 
-(add-hook 'emacs-startup-hook #'tab-bar-mode) ;; tabs
+(add-hook 'emacs-startup-hook
+          (lambda () (when (display-graphic-p) (tab-bar-mode 1)))) ;; tabs (GUI only)
 (define-key easymacs-leader-map (kbd "TAB") #'tab-switch)       ;; ivy-powered tab switch
 (define-key easymacs-leader-map (kbd "T")   #'tab-new)
 (define-key easymacs-leader-map (kbd "w")   #'tab-close)
-
-;; Claude Code Integration — autoload rather than require so cc.el and its
-;; (cheap but non-zero) deps aren't touched until you invoke a command.
-(autoload 'cc-query "cc" nil t)
-(autoload 'cc-new-session "cc" nil t)
-(autoload 'cc-stop "cc" nil t)
-(autoload 'cc-dismiss "cc" nil t)
-(define-prefix-command 'easymacs-claude-map)
-(define-key easymacs-leader-map (kbd "C-c") 'easymacs-claude-map)
-(define-key easymacs-claude-map (kbd "c") #'cc-query)
-(define-key easymacs-claude-map (kbd "n") #'cc-new-session)
-(define-key easymacs-claude-map (kbd "k") #'cc-stop)
-
-
-;; setup god-mode — autoload on first toggle instead of eagerly loading.
-(use-package god-mode
-  :defer t
-  :commands (god-mode-all god-local-mode)
-  :init
-  ;; GUI: <escape> is a real key, bind it directly.
-  ;; TTY: <escape> is the Meta prefix (\e + key == M-key), so binding it
-  ;; would break every Meta keystroke.  Use C-\ in terminal instead.
-  (if (display-graphic-p)
-      (global-set-key (kbd "<escape>") #'god-mode-all)
-    (global-set-key (kbd "C-\\") #'god-mode-all))
-  :config
-  (setq god-exempt-major-modes nil
-        god-exempt-predicates
-        (list (lambda () (derived-mode-p 'magit-mode 'dired-mode))))
-  ;; GUI: set `cursor-type'.  TTY: emit DECSCUSR escapes directly.
-  ;; god-mode → `\e[2 q' (steady block).
-  ;; insert   → `\e[6 q' (steady bar/line).
-  ;; Chosen after ruling out: blinking block (distracting) and
-  ;; underline-in-insert (too similar to block for quick recognition).
-  (defun my-god-mode-update-cursor-type ()
-    (let ((box-p (or god-local-mode buffer-read-only)))
-      (if (display-graphic-p)
-          (setq cursor-type (if box-p 'box 'bar))
-        (send-string-to-terminal (if box-p "\e[2 q" "\e[6 q")))))
-  (add-hook 'post-command-hook #'my-god-mode-update-cursor-type))
 
 ;; which-key is builtin on Emacs 30+, but enabling it eagerly costs a
 ;; little; defer to after startup.
@@ -331,10 +297,21 @@
 (use-package pyvenv
   :defer t)
 
+;; Activate the repo's .venv before starting eglot so the LSP server
+;; inherits the right interpreter + site-packages.
+(defun easymacs--python-setup ()
+  (require 'pyvenv)
+  (when-let* ((proj (project-current))
+              (root (project-root proj))
+              (venv (expand-file-name ".venv" root))
+              ((file-directory-p venv)))
+    (pyvenv-activate venv))
+  (eglot-ensure))
+
 (use-package eglot
   :ensure nil ;; builtin
-  :hook ((python-mode . eglot-ensure)
-         (python-ts-mode . eglot-ensure))
+  :hook ((python-mode . easymacs--python-setup)
+         (python-ts-mode . easymacs--python-setup))
   :config
   (add-to-list 'eglot-server-programs
                '((python-mode python-ts-mode) . ("zubanls"))))
