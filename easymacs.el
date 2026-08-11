@@ -44,9 +44,16 @@
   :type 'directory
   :group 'easymacs)
 
-;; Adjust PATH for Homebrew binaries, optional based on your config
-(setenv "PATH" (concat (getenv "PATH") ":/opt/homebrew/bin"))
-(add-to-list 'exec-path "/opt/homebrew/bin")
+;; GUI Emacs launched from the macOS Applications folder starts via launchd
+;; with a minimal PATH and never sources ~/.zshrc, so tools under ~/.local/bin
+;; (uv, etc.), Homebrew, cargo, and friends are invisible to eshell/compile.
+;; Import the real shell environment.  A terminal `emacs -nw' already inherits
+;; a correct PATH from the shell it was launched in, so only pay the
+;; shell-spawn cost for GUI/daemon frames.
+(use-package exec-path-from-shell
+  :if (or (memq window-system '(mac ns x)) (daemonp))
+  :config
+  (exec-path-from-shell-initialize))
 
 ;; Store Emacs backup and auto-save files outside the repo
 (defcustom easymacs-backup-dir (expand-file-name "backups" user-emacs-directory)
@@ -173,10 +180,40 @@
 (use-package breadcrumb
   :hook (emacs-startup . breadcrumb-mode))
 
-(use-package catppuccin-theme
+;; (use-package catppuccin-theme
+;;   :config
+;;   (setq catppuccin-flavor 'mocha)
+;;   (load-theme 'catppuccin :no-confirm))
+(use-package modus-themes
   :config
-  (setq catppuccin-flavor 'mocha)
-  (load-theme 'catppuccin :no-confirm))
+  (modus-themes-load-theme 'modus-vivendi-tinted))
+
+;; Multi-eshell helpers (C-; C-e new / C-; e switch).  Named buffers beat
+;; `C-u M-x eshell' numbering; ivy-mode makes the plain `completing-read'
+;; a proper fuzzy menu, so no aweshell dependency needed.
+(defun easymacs-eshell-new (name)
+  "Open (or switch to) an eshell session named NAME."
+  (interactive "sEshell name: ")
+  (let ((eshell-buffer-name (format "*eshell: %s*" name)))
+    (eshell)))
+
+;; Type `cdi' at any eshell prompt to pick the target directory with ivy
+;; (navigate with C-j to descend, RET to accept) instead of typing the path.
+(defun eshell/cdi (&rest _)
+  "Interactively choose a directory with completion and cd into it."
+  (eshell/cd (read-directory-name "cd: ")))
+
+(defun easymacs-eshell-switch ()
+  "Switch to an eshell buffer, with completion when there are several."
+  (interactive)
+  (let ((bufs (seq-filter (lambda (b)
+                            (eq (buffer-local-value 'major-mode b) 'eshell-mode))
+                          (buffer-list))))
+    (cond
+     ((null bufs) (call-interactively #'easymacs-eshell-new))
+     ((null (cdr bufs)) (switch-to-buffer (car bufs)))
+     (t (switch-to-buffer
+         (completing-read "Eshell: " (mapcar #'buffer-name bufs) nil t))))))
 
 ;; Manual toggle between catppuccin mocha (dark) and latte (light).
 ;; Bound to C-; t below.
@@ -258,6 +295,8 @@
 (define-key easymacs-leader-map (kbd "x") #'company-yasnippet)
 (define-key easymacs-leader-map (kbd "t") #'easymacs-toggle-theme)
 (define-key easymacs-leader-map (kbd "u") #'revert-buffer-quick)
+(define-key easymacs-leader-map (kbd "e") #'easymacs-eshell-switch)
+(define-key easymacs-leader-map (kbd "C-e") #'easymacs-eshell-new)
 
 ;; Python keybindings (C-; p prefix)
 (define-prefix-command 'easymacs-python-map)
@@ -341,12 +380,16 @@
 (setq python-shell-interpreter "ipython"
       python-shell-interpreter-args "-i --simple-prompt")
 
-(add-hook 'python-mode-hook
-          (lambda ()
-            (setq-local indent-tabs-mode nil
-                        tab-width 2
-                        python-indent-offset 2)
-            (add-hook 'before-save-hook #'delete-trailing-whitespace nil t)))
+(defun easymacs--python-style ()
+  (setq-local indent-tabs-mode nil
+              tab-width 2
+              python-indent-offset 2)
+  (add-hook 'before-save-hook #'delete-trailing-whitespace nil t))
+
+;; Apply to both classic and tree-sitter modes — treesit-auto remaps
+;; .py files to `python-ts-mode', which has its own hook.
+(add-hook 'python-mode-hook    #'easymacs--python-style)
+(add-hook 'python-ts-mode-hook #'easymacs--python-style)
 
 (provide 'easymacs)
 ;;; easymacs.el ends here
